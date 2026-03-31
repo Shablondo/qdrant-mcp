@@ -25,7 +25,7 @@ build:
     - vm
   stage: build
   variables:
-    DESTINATION: $rtfact_docker_dev_host/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA
+    DESTINATION: https://art.x5.ru:443/artifactory/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA
   extends:
     - .build
   only:
