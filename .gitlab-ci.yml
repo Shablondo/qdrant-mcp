@@ -12,6 +12,8 @@ stages:
   - build
 
 prepare:
+  tags:
+    - vm
   stage: prepare
   extends:
     - .prepare_configs
@@ -19,6 +21,8 @@ prepare:
     - master
 
 build:
+  tags:
+    - vm
   stage: build
   variables:
     DESTINATION: $rtfact_docker_dev_host/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA

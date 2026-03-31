@@ -1,8 +1,8 @@
 FROM docker-registry.x5.ru/python:3.11.15-trixie
 
-ENV PIP_INDEX_URL=https://art.x5.ru/artifactory/pypi-global-remote
-ENV PIP_EXTRA_INDEX_URL=https://art.x5.ru/artifactory/pypi-pytorch-remote
-ENV PIP_TRUSTED_HOST=art.x5.ru
+# ENV PIP_INDEX_URL=https://art.x5.ru/artifactory/pypi-global-remote
+# ENV PIP_EXTRA_INDEX_URL=https://art.x5.ru/artifactory/pypi-pytorch-remote
+# ENV PIP_TRUSTED_HOST=art.x5.ru
 
 WORKDIR /app
 
