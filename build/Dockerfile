@@ -1,4 +1,7 @@
-FROM python:3.11-slim
+FROM docker-registry.x5.ru/python:3.11.15-trixie
+
+ENV PIP_INDEX_URL=https://art.x5.ru/artifactory/pypi-global-remote
+ENV PIP_TRUSTED_HOST=art.x5.ru
 
 WORKDIR /app
 

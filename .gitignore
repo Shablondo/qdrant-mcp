@@ -17,7 +17,6 @@ __pycache__/
 *.egg
 *.egg-info/
 dist/
-build/
 eggs/
 .eggs/
 lib/
@@ -102,7 +101,6 @@ Thumbs.db
 
 # Distribution / packaging
 .Python
-build/
 develop-eggs/
 dist/
 downloads/

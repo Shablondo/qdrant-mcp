@@ -1,0 +1,28 @@
+include:
+  - project: 'omni/devops-team/devops/ci-templates'
+    ref: $PIPELINE_TEMPLATE_REF
+    file: 'generic.yml'
+
+variables:
+  TARGET: target
+  TAG: $CI_COMMIT_SHORT_SHA
+
+stages:
+  - prepare
+  - build
+
+prepare:
+  stage: prepare
+  extends:
+    - .prepare_configs
+  only:
+    - master
+
+build:
+  stage: build
+  variables:
+    DESTINATION: $rtfact_docker_dev_host/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA
+  extends:
+    - .build
+  only:
+    - master
