@@ -181,6 +181,7 @@ celerybeat.pid
 
 # Sphinx documentation
 docs/_build/
+docs/superpowers/
 
 # PyBuilder
 .pybuilder/

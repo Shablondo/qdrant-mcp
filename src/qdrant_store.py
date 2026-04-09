@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://host.docker.internal:6333")
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "confluence_docs")
-EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "2560"))
+EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
 
 UPSERT_BATCH_SIZE = 64
 PAGE_SCROLL_LIMIT = 1000
