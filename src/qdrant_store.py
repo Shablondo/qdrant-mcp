@@ -5,6 +5,7 @@ qdrant_store.py — обёртка над qdrant-client для хранения 
 
 import logging
 import os
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://host.docker.internal:6333")
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "confluence_docs")
 EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
+_ENSURE_COLLECTION_LOCK = threading.Lock()
 
 UPSERT_BATCH_SIZE = 64
 PAGE_SCROLL_LIMIT = 1000
@@ -37,6 +39,11 @@ CONTEXT_SEPARATOR = "\n\n...[пропущено]...\n\n"
 def _get_client() -> QdrantClient:
     """Создаёт клиент Qdrant."""
     return QdrantClient(url=QDRANT_URL)
+
+
+def _is_collection_exists_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "already exists" in message and QDRANT_COLLECTION.lower() in message
 
 
 def _serialize_point(point: Any) -> Dict[str, Any]:
@@ -175,47 +182,53 @@ def ensure_collection_exists() -> None:
     Использует named vectors для заголовков и контента.
     """
     client = _get_client()
-    existing = [collection.name for collection in client.get_collections().collections]
+    with _ENSURE_COLLECTION_LOCK:
+        existing = [collection.name for collection in client.get_collections().collections]
 
-    if QDRANT_COLLECTION in existing:
-        logger.debug("Коллекция '%s' уже существует", QDRANT_COLLECTION)
-        return
+        if QDRANT_COLLECTION in existing:
+            logger.debug("Коллекция '%s' уже существует", QDRANT_COLLECTION)
+            return
 
-    logger.info("Создание коллекции '%s' dim=%s", QDRANT_COLLECTION, EMBED_DIMENSIONS)
-    client.create_collection(
-        collection_name=QDRANT_COLLECTION,
-        vectors_config={
-            "content": VectorParams(size=EMBED_DIMENSIONS, distance=Distance.COSINE),
-            "title": VectorParams(size=EMBED_DIMENSIONS, distance=Distance.COSINE),
-        },
-    )
+        logger.info("Создание коллекции '%s' dim=%s", QDRANT_COLLECTION, EMBED_DIMENSIONS)
+        try:
+            client.create_collection(
+                collection_name=QDRANT_COLLECTION,
+                vectors_config={
+                    "content": VectorParams(size=EMBED_DIMENSIONS, distance=Distance.COSINE),
+                    "title": VectorParams(size=EMBED_DIMENSIONS, distance=Distance.COSINE),
+                },
+            )
+        except Exception as exc:
+            if _is_collection_exists_error(exc):
+                return
+            raise
 
-    client.create_payload_index(
-        collection_name=QDRANT_COLLECTION,
-        field_name="page_id",
-        field_schema=PayloadSchemaType.KEYWORD,
-    )
-    client.create_payload_index(
-        collection_name=QDRANT_COLLECTION,
-        field_name="root_page_id",
-        field_schema=PayloadSchemaType.KEYWORD,
-    )
-    client.create_payload_index(
-        collection_name=QDRANT_COLLECTION,
-        field_name="space_key",
-        field_schema=PayloadSchemaType.KEYWORD,
-    )
-    client.create_payload_index(
-        collection_name=QDRANT_COLLECTION,
-        field_name="last_modified",
-        field_schema=PayloadSchemaType.DATETIME,
-    )
-    client.create_payload_index(
-        collection_name=QDRANT_COLLECTION,
-        field_name="title",
-        field_schema=PayloadSchemaType.TEXT,
-    )
-    logger.info("Коллекция '%s' создана с named vectors и индексами payload", QDRANT_COLLECTION)
+        client.create_payload_index(
+            collection_name=QDRANT_COLLECTION,
+            field_name="page_id",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+        client.create_payload_index(
+            collection_name=QDRANT_COLLECTION,
+            field_name="root_page_id",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+        client.create_payload_index(
+            collection_name=QDRANT_COLLECTION,
+            field_name="space_key",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+        client.create_payload_index(
+            collection_name=QDRANT_COLLECTION,
+            field_name="last_modified",
+            field_schema=PayloadSchemaType.DATETIME,
+        )
+        client.create_payload_index(
+            collection_name=QDRANT_COLLECTION,
+            field_name="title",
+            field_schema=PayloadSchemaType.TEXT,
+        )
+        logger.info("Коллекция '%s' создана с named vectors и индексами payload", QDRANT_COLLECTION)
 
 
 def upsert_page_chunks(
@@ -282,6 +295,12 @@ def _delete_page_points(client: QdrantClient, page_id: str) -> None:
         ),
     )
     logger.debug("Удалены старые points для page_id=%s", page_id)
+
+
+def delete_page(page_id: str) -> None:
+    """Удаляет все points для указанной страницы."""
+    client = _get_client()
+    _delete_page_points(client, page_id)
 
 
 def delete_page_tree(root_page_id: str) -> None:

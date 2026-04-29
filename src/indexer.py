@@ -197,7 +197,8 @@ def _fetch_page(client: httpx.Client, page_id: str) -> Optional[Dict[str, Any]]:
     Получает страницу Confluence по ID.
 
     Returns:
-        Словарь с полями: id, title, body_html, url, space_key, last_modified
+        Словарь с полями: id, title, body_html, url, space_key,
+        last_modified, version
         или None если страница недоступна.
     """
     url = f"{CONFLUENCE_URL}/rest/api/content/{page_id}"
@@ -230,8 +231,11 @@ def _fetch_page(client: httpx.Client, page_id: str) -> Optional[Dict[str, Any]]:
         pass
 
     last_modified = ""
+    version = ""
     try:
-        last_modified = data.get("version", {}).get("when", "")
+        version_data = data.get("version", {})
+        last_modified = version_data.get("when", "")
+        version = str(version_data.get("number", ""))
     except Exception:
         pass
 
@@ -252,6 +256,7 @@ def _fetch_page(client: httpx.Client, page_id: str) -> Optional[Dict[str, Any]]:
         "url": page_url,
         "space_key": space_key,
         "last_modified": last_modified,
+        "version": version,
     }
 
 
