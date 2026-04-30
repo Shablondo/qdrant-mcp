@@ -48,6 +48,8 @@ cp .env.example .env
 - `ALLURE_TESTOPS_TIMEOUT` — timeout запросов к Allure TestOps
 - `ALLURE_TESTOPS_SSL_VERIFY` — проверка SSL сертификата (`true`/`false`)
 - `ALLURE_ATTACHMENT_MAX_CHARS` — сколько символов текстового вложения сохранять в индекс
+- `OPENAPI_TIMEOUT` — timeout запросов к Swagger/OpenAPI
+- `OPENAPI_SSL_VERIFY` — проверка SSL сертификата Swagger/OpenAPI (`true`/`false`); для внутренних stage URL обычно нужно `false`
 
 ### 2. Собери Docker образ
 
@@ -77,6 +79,8 @@ docker run --rm -i \
   -e CONFLUENCE_URL \
   -e CONFLUENCE_PERSONAL_TOKEN \
   -e CONFLUENCE_SSL_VERIFY \
+  -e OPENAPI_TIMEOUT \
+  -e OPENAPI_SSL_VERIFY \
   -e EMBED_MODEL \
   -e OPENAI_API_KEY \
   -e EMBED_API_ENDPOINT \
@@ -86,6 +90,45 @@ docker run --rm -i \
 ```
 
 Для MCP-конфига вместо локальной сборки можно использовать этот образ напрямую.
+
+## Ручная проверка актуальности RAG
+
+Source registry задаётся в `config/rag_sources.yaml`. У каждого source есть `sync_interval_minutes`; стандартный интервал актуальности - 1440 минут, то есть один раз в сутки. `rag_sync_sources` проверяет `next_due_at` и синхронизирует только те sources, у которых истёк интервал актуальности. Если source ещё актуален, он будет пропущен со статусом `skipped_not_due`.
+
+Синхронизация выполняется параллельно по независимым sources. Один и тот же source защищён in-process lock по ключу `kind:id`; если такой source уже синхронизируется, повторный запуск вернёт `skipped_locked` и не возьмёт его в работу повторно.
+
+Параллельность управляется переменными окружения:
+
+- `RAG_SYNC_MAX_WORKERS` - сколько sources синхронизировать одновременно, по умолчанию `4`.
+- `RAG_ALLURE_SYNC_MAX_WORKERS` - сколько Allure test cases внутри одного Allure source обрабатывать одновременно, по умолчанию `6`.
+
+Запуск ручной проверки:
+
+```bash
+python -m rag_sync_cli once --sources-path config/rag_sources.yaml
+```
+
+Принудительная проверка без ожидания интервала:
+
+```bash
+python -m rag_sync_cli once --sources-path config/rag_sources.yaml --force
+```
+
+`--force` и MCP-параметр `force=true` игнорируют `sync_interval_minutes` и запускают проверку сразу.
+
+Проверка per-source статуса:
+
+```bash
+python -m rag_sync_cli source-status --sources-path config/rag_sources.yaml
+```
+
+Через MCP доступны те же данные:
+
+- `rag_sync_sources(force=false)`
+- `rag_get_source_sync_status()`
+- `rag_get_sync_status(kind="rag_source")`
+
+`rag_get_sync_status` предназначен для точечной диагностики sync state. Без `kind` или `source_id_prefix` он не выгружает коллекцию, чтобы не забивать контекст LLM; для подробностей передавайте фильтр, например `kind="openapi_operation", source_id_prefix="service-name-pp-test:"`.
 
 ### 4. Добавь в .kilocode/mcp.json
 
@@ -126,17 +169,16 @@ docker run --rm -i \
     },
     "disabled": false,
     "alwaysAllow": [
-        "search",
-        "search_hybrid_tool",
-        "find_similar_pages",
-        "search_by_examples",
-        "get_indexed_page",
-        "list_indexed",
-        "get_collection_info",
-        "search_allure_test_cases",
-        "get_indexed_allure_test_case",
-        "list_indexed_allure_test_cases",
-        "get_allure_collection_info"
+        "rag_sync_sources",
+        "rag_get_sync_status",
+        "rag_get_source_sync_status",
+        "rag_list_sources",
+        "rag_confluence_search",
+        "rag_confluence_get_indexed_page",
+        "rag_allure_search_test_cases",
+        "rag_allure_get_indexed_test_case",
+        "rag_openapi_find_curl",
+        "rag_openapi_search_operations"
     ]
 }
 ```
@@ -155,17 +197,16 @@ docker run --rm -i \
     ],
     "disabled": false,
     "alwaysAllow": [
-        "search",
-        "search_hybrid_tool",
-        "find_similar_pages",
-        "search_by_examples",
-        "get_indexed_page",
-        "list_indexed",
-        "get_collection_info",
-        "search_allure_test_cases",
-        "get_indexed_allure_test_case",
-        "list_indexed_allure_test_cases",
-        "get_allure_collection_info"
+        "rag_sync_sources",
+        "rag_get_sync_status",
+        "rag_get_source_sync_status",
+        "rag_list_sources",
+        "rag_confluence_search",
+        "rag_confluence_get_indexed_page",
+        "rag_allure_search_test_cases",
+        "rag_allure_get_indexed_test_case",
+        "rag_openapi_find_curl",
+        "rag_openapi_search_operations"
     ]
 }
 ```
@@ -174,7 +215,7 @@ docker run --rm -i \
 
 ### Первичная индексация
 
-В любом режиме Kilo Code вызови инструмент `index_page_tree`:
+В любом режиме Kilo Code вызови инструмент `rag_confluence_index_page_tree`:
 
 ```
 Проиндексируй страницу 1392589758 и все её дочерние страницы
@@ -232,7 +273,7 @@ tag="smoke"
 status="Active"
 
 # Поиск по владельцу
-owner="Nikita.Shablinsky"
+owner="user.name"
 
 # Комбинированный запрос
 tag="smoke" and status="Active"
@@ -318,7 +359,7 @@ projectId=38
 Найди информацию о фулфилменте, используй гибридный поиск
 ```
 
-Инструмент `search_hybrid_tool` сохранён для совместимости, но сейчас использует тот же dense-поиск, что и основной `search`.
+Инструмент `rag_confluence_search_hybrid` сейчас использует тот же dense-поиск, что и основной `rag_confluence_search`.
 
 ### Поиск похожих страниц
 
@@ -358,21 +399,27 @@ projectId=38
 
 | Инструмент | Описание |
 |---|---|
-| `index_page_tree(page_id)` | Индексирует страницу и все дочерние рекурсивно |
-| `reindex_page_tree(page_id)` | Переиндексирует дерево (удалить + переиндексировать) |
-| `search(query, limit?, root_page_id?, space_key?, group_by?, group_size?, exclude_page_ids?, search_vector?, last_modified_after?, last_modified_before?, title_filter?, context_size?)` | Семантический поиск с расширенными фильтрами, multi-vector и расширением контекста |
-| `search_hybrid_tool(query, limit?, root_page_id?, space_key?, exclude_page_ids?, search_vector?, last_modified_after?, last_modified_before?, title_filter?)` | Dense-only поиск через совместимый интерфейс |
-| `find_similar_pages(page_id, limit?, space_key?, root_page_id?, exclude_page_ids?, search_vector?)` | Поиск похожих страниц (Recommendation API) |
-| `search_by_examples(positive_page_ids, negative_page_ids?, limit?, space_key?, root_page_id?, exclude_page_ids?, search_vector?)` | Поиск по примерам (Discovery API) |
-| `get_indexed_page(page_id)` | Получить все чанки страницы из Qdrant |
-| `list_indexed()` | Список всех проиндексированных страниц |
-| `get_collection_info()` | Статистика коллекции Qdrant |
-| `index_allure_test_cases(project_id?, rql?, page_size?, max_test_cases?)` | Индексирует тест-кейсы Allure TestOps |
-| `reindex_allure_test_cases(project_id?, rql?, page_size?, max_test_cases?)` | Переиндексирует тест-кейсы Allure TestOps |
-| `search_allure_test_cases(query, limit?, project_id?, status?, owner?, tags?, chunk_types?, exclude_test_case_ids?, group_by?, group_size?, search_vector?, updated_after?, updated_before?, name_filter?)` | Семантический поиск по тест-кейсам Allure |
-| `get_indexed_allure_test_case(test_case_id)` | Получить все чанки тест-кейса из Allure-индекса |
-| `list_indexed_allure_test_cases()` | Список всех проиндексированных тест-кейсов |
-| `get_allure_collection_info()` | Статистика коллекции тест-кейсов Allure |
+| `rag_confluence_index_page_tree(page_id)` | Индексирует страницу и все дочерние рекурсивно |
+| `rag_confluence_reindex_page_tree(page_id)` | Переиндексирует дерево Confluence |
+| `rag_confluence_search(query, ...)` | Семантический поиск по Confluence |
+| `rag_confluence_search_hybrid(query, ...)` | Dense-only поиск через совместимый интерфейс |
+| `rag_confluence_find_similar_pages(page_id, ...)` | Поиск похожих страниц |
+| `rag_confluence_search_by_examples(positive_page_ids, ...)` | Поиск по примерам |
+| `rag_confluence_get_indexed_page(page_id)` | Получить чанки страницы |
+| `rag_confluence_list_indexed_pages()` | Список проиндексированных страниц |
+| `rag_confluence_get_collection_info()` | Статистика коллекции Confluence |
+| `rag_allure_index_test_cases(project_id?, rql?, page_size?, max_test_cases?)` | Индексирует тест-кейсы Allure TestOps |
+| `rag_allure_reindex_test_cases(project_id?, rql?, page_size?, max_test_cases?)` | Переиндексирует тест-кейсы Allure TestOps |
+| `rag_allure_search_test_cases(query, ...)` | Семантический поиск по тест-кейсам Allure |
+| `rag_allure_get_indexed_test_case(test_case_id)` | Получить чанки тест-кейса |
+| `rag_allure_list_indexed_test_cases()` | Список проиндексированных тест-кейсов |
+| `rag_allure_get_collection_info()` | Статистика коллекции Allure |
+| `rag_openapi_search_operations(query, ...)` | Compact-поиск OpenAPI operations |
+| `rag_openapi_find_curl(query, ...)` | Найти operation и вернуть curl |
+| `rag_openapi_get_operation(service, method, path)` | Получить полный OpenAPI contract |
+| `rag_sync_sources(...)` | Ручная синхронизация sources с проверкой актуальности |
+| `rag_get_source_sync_status()` | Per-source freshness status |
+| `rag_get_sync_status(kind?, source_id_prefix?, limit?)` | Ограниченная диагностика sync state, требует фильтр |
 
 ## Структура данных в Qdrant
 
@@ -384,7 +431,7 @@ projectId=38
 ```json
 {
   "page_id": "1392589758",
-  "title": "7.25 Fulfillment Сервис фулфилмента",
+  "title": "7.25 Test Сервис Test",
   "url": "https://your-confluence.example.com/spaces/TEAM/pages/...",
   "space_key": "TEAM",
   "root_page_id": "1392589758",
@@ -412,7 +459,7 @@ projectId=38
   "project_id": "38",
   "name": "Проверка валидации формы логина",
   "status": "Active",
-  "owner": "Nikita.Shablinsky",
+  "owner": "User.Name",
   "updated_at": "2025-01-15T10:00:00Z",
   "tags": ["smoke", "regression"],
   "chunk_type": "scenario",
@@ -470,8 +517,8 @@ qdrant-mcp/
 - Ускорение всех фильтров по этим полям
 
 ### Search Compatibility
-- Инструмент `search_hybrid_tool` сохранён для обратной совместимости
-- В текущей версии использует dense-only поиск без внешних sparse-моделей
+- Legacy MCP tool names удалены из публичного registry
+- Используйте явные `rag_confluence_*`, `rag_allure_*`, `rag_openapi_*`, `rag_sync_*`
 
 ### Search Context Expansion
 - Получение соседних чанков для большего контекста

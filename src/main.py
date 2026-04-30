@@ -1,13 +1,11 @@
 """
 main.py — FastMCP сервер для семантического поиска по Confluence и Allure TestOps через Qdrant.
 
-Инструменты:
-  - index_page_tree      — индексация страницы и всего её дерева
-  - reindex_page_tree    — переиндексация (удалить старое + проиндексировать заново)
-  - search               — семантический поиск по проиндексированным страницам
-  - get_indexed_page     — получить содержимое страницы из Qdrant
-  - list_indexed         — список всех проиндексированных страниц
-  - get_collection_stats — статистика коллекции Qdrant
+Публичные MCP-инструменты используют явные префиксы:
+  - rag_confluence_* — документация Confluence
+  - rag_allure_*     — тест-кейсы Allure TestOps
+  - rag_openapi_*    — OpenAPI/Swagger контракты
+  - rag_sync_*       — синхронизация RAG sources
 """
 
 import logging
@@ -25,6 +23,15 @@ from allure_qdrant_store import (
 )
 from embedder import embed_single
 from indexer import run_index as run_confluence_index
+from openapi_curl import build_curl_template
+from openapi_indexer import build_openapi_attachment, index_openapi_source
+from openapi_intent import infer_http_methods_from_query
+from openapi_qdrant_store import (
+    get_collection_stats as get_openapi_collection_stats,
+    get_operation as get_openapi_operation_from_store,
+    list_indexed_operations,
+    search_operations as search_openapi_operations_qdrant,
+)
 from qdrant_store import (
     delete_page_tree,
     discover_by_examples,
@@ -36,7 +43,8 @@ from qdrant_store import (
     search as qdrant_search,
     search_hybrid,
 )
-from tool_utils import clamp_limit, normalize_search_vector, run_tool
+from rag_sync import get_source_sync_status, get_sync_status, list_sources, load_registry, sync_sources
+from tool_utils import clamp_limit, normalize_search_vector, normalize_string_list, run_tool
 
 # Настройка логирования
 logging.basicConfig(
@@ -50,15 +58,12 @@ mcp = FastMCP(
     name="qdrant-mcp",
     instructions=(
         "Этот сервер предоставляет семантический поиск по документации Confluence "
-        "и тест-кейсам Allure TestOps, проиндексированным в локальной базе данных Qdrant. "
-        "Используй 'search' для поиска релевантных страниц по теме. "
-        "Используй 'index_page_tree' для первичной индексации раздела документации. "
-        "Используй 'reindex_page_tree' для обновления документации после её изменений. "
-        "Используй 'index_allure_test_cases' и 'search_allure_test_cases' для работы с тест-кейсами."
+        "тест-кейсам Allure TestOps и OpenAPI/Swagger контрактам, проиндексированным "
+        "в локальной базе данных Qdrant. Используй явные инструменты "
+        "'rag_confluence_*', 'rag_allure_*', 'rag_openapi_*' и 'rag_sync_*'."
     ),
 )
 
-@mcp.tool()
 def index_page_tree(page_id: str) -> str:
     """
     Индексирует страницу Confluence и все её дочерние страницы рекурсивно в Qdrant.
@@ -78,7 +83,6 @@ def index_page_tree(page_id: str) -> str:
     return run_tool(logger, "index_page_tree", lambda: run_confluence_index(page_id))
 
 
-@mcp.tool()
 def reindex_page_tree(page_id: str) -> str:
     """
     Переиндексирует дерево страниц Confluence.
@@ -105,7 +109,6 @@ def reindex_page_tree(page_id: str) -> str:
     return run_tool(logger, "reindex_page_tree", _action)
 
 
-@mcp.tool()
 def search(
     query: str,
     limit: int = 5,
@@ -162,7 +165,6 @@ def search(
     return run_tool(logger, "search", _action)
 
 
-@mcp.tool()
 def get_indexed_page(page_id: str) -> str:
     """
     Возвращает все проиндексированные фрагменты страницы из Qdrant.
@@ -190,7 +192,6 @@ def get_indexed_page(page_id: str) -> str:
     return run_tool(logger, "get_indexed_page", _action)
 
 
-@mcp.tool()
 def list_indexed() -> str:
     """
     Возвращает список всех проиндексированных страниц Confluence в Qdrant.
@@ -206,7 +207,6 @@ def list_indexed() -> str:
     )
 
 
-@mcp.tool()
 def get_collection_info() -> str:
     """
     Возвращает статистику коллекции Qdrant: количество точек, статус, URL.
@@ -220,7 +220,6 @@ def get_collection_info() -> str:
     return run_tool(logger, "get_collection_info", _action)
 
 
-@mcp.tool()
 def find_similar_pages(
     page_id: str,
     limit: int = 5,
@@ -262,7 +261,6 @@ def find_similar_pages(
     )
 
 
-@mcp.tool()
 def search_by_examples(
     positive_page_ids: List[str],
     negative_page_ids: Optional[List[str]] = None,
@@ -308,7 +306,6 @@ def search_by_examples(
     )
 
 
-@mcp.tool()
 def search_hybrid_tool(
     query: str,
     limit: int = 5,
@@ -355,7 +352,6 @@ def search_hybrid_tool(
     return run_tool(logger, "search_hybrid_tool", _action)
 
 
-@mcp.tool()
 def index_allure_test_cases(
     project_id: Optional[int] = None,
     rql: Optional[str] = None,
@@ -397,7 +393,6 @@ def index_allure_test_cases(
     )
 
 
-@mcp.tool()
 def reindex_allure_test_cases(
     project_id: Optional[int] = None,
     rql: Optional[str] = None,
@@ -439,7 +434,6 @@ def reindex_allure_test_cases(
     )
 
 
-@mcp.tool()
 def search_allure_test_cases(
     query: str,
     limit: int = 5,
@@ -502,7 +496,6 @@ def search_allure_test_cases(
     return run_tool(logger, "search_allure_test_cases", _action)
 
 
-@mcp.tool()
 def get_indexed_allure_test_case(test_case_id: str) -> str:
     """
     Возвращает все проиндексированные чанки тест-кейса Allure из Qdrant.
@@ -538,7 +531,6 @@ def get_indexed_allure_test_case(test_case_id: str) -> str:
     return run_tool(logger, "get_indexed_allure_test_case", _action)
 
 
-@mcp.tool()
 def list_indexed_allure_test_cases() -> str:
     """
     Возвращает список всех проиндексированных тест-кейсов Allure.
@@ -555,7 +547,6 @@ def list_indexed_allure_test_cases() -> str:
     )
 
 
-@mcp.tool()
 def get_allure_collection_info() -> str:
     """
     Возвращает статистику коллекции тест-кейсов Allure в Qdrant.
@@ -567,6 +558,462 @@ def get_allure_collection_info() -> str:
         return get_allure_collection_stats()
 
     return run_tool(logger, "get_allure_collection_info", _action)
+
+
+@mcp.tool(name="rag_confluence_index_page_tree")
+def rag_confluence_index_page_tree(page_id: str) -> str:
+    """Индексирует страницу Confluence и всех её потомков рекурсивно."""
+    return index_page_tree(page_id)
+
+
+@mcp.tool(name="rag_confluence_reindex_page_tree")
+def rag_confluence_reindex_page_tree(page_id: str) -> str:
+    """Переиндексирует страницу Confluence и всех её потомков рекурсивно."""
+    return reindex_page_tree(page_id)
+
+
+@mcp.tool(name="rag_confluence_search")
+def rag_confluence_search(
+    query: str,
+    limit: int = 5,
+    root_page_id: Optional[str] = None,
+    space_key: Optional[str] = None,
+    group_by: Optional[str] = None,
+    group_size: int = 1,
+    exclude_page_ids: Optional[List[str]] = None,
+    search_vector: str = "content",
+    last_modified_after: Optional[str] = None,
+    last_modified_before: Optional[str] = None,
+    title_filter: Optional[str] = None,
+    context_size: int = 0,
+) -> str:
+    """Семантический поиск по Confluence RAG."""
+    return search(
+        query=query,
+        limit=limit,
+        root_page_id=root_page_id,
+        space_key=space_key,
+        group_by=group_by,
+        group_size=group_size,
+        exclude_page_ids=exclude_page_ids,
+        search_vector=search_vector,
+        last_modified_after=last_modified_after,
+        last_modified_before=last_modified_before,
+        title_filter=title_filter,
+        context_size=context_size,
+    )
+
+
+@mcp.tool(name="rag_confluence_search_hybrid")
+def rag_confluence_search_hybrid(
+    query: str,
+    limit: int = 5,
+    root_page_id: Optional[str] = None,
+    space_key: Optional[str] = None,
+    exclude_page_ids: Optional[List[str]] = None,
+    search_vector: str = "content",
+    last_modified_after: Optional[str] = None,
+    last_modified_before: Optional[str] = None,
+    title_filter: Optional[str] = None,
+) -> str:
+    """Совместимый dense-only поиск по Confluence RAG."""
+    return search_hybrid_tool(
+        query=query,
+        limit=limit,
+        root_page_id=root_page_id,
+        space_key=space_key,
+        exclude_page_ids=exclude_page_ids,
+        search_vector=search_vector,
+        last_modified_after=last_modified_after,
+        last_modified_before=last_modified_before,
+        title_filter=title_filter,
+    )
+
+
+@mcp.tool(name="rag_confluence_find_similar_pages")
+def rag_confluence_find_similar_pages(
+    page_id: str,
+    limit: int = 5,
+    space_key: Optional[str] = None,
+    root_page_id: Optional[str] = None,
+    exclude_page_ids: Optional[List[str]] = None,
+    search_vector: str = "content",
+) -> str:
+    """Находит похожие страницы Confluence."""
+    return find_similar_pages(
+        page_id=page_id,
+        limit=limit,
+        space_key=space_key,
+        root_page_id=root_page_id,
+        exclude_page_ids=exclude_page_ids,
+        search_vector=search_vector,
+    )
+
+
+@mcp.tool(name="rag_confluence_search_by_examples")
+def rag_confluence_search_by_examples(
+    positive_page_ids: List[str],
+    negative_page_ids: Optional[List[str]] = None,
+    limit: int = 5,
+    space_key: Optional[str] = None,
+    root_page_id: Optional[str] = None,
+    exclude_page_ids: Optional[List[str]] = None,
+    search_vector: str = "content",
+) -> str:
+    """Находит страницы Confluence по positive/negative examples."""
+    return search_by_examples(
+        positive_page_ids=positive_page_ids,
+        negative_page_ids=negative_page_ids,
+        limit=limit,
+        space_key=space_key,
+        root_page_id=root_page_id,
+        exclude_page_ids=exclude_page_ids,
+        search_vector=search_vector,
+    )
+
+
+@mcp.tool(name="rag_confluence_get_indexed_page")
+def rag_confluence_get_indexed_page(page_id: str) -> str:
+    """Возвращает индексированные чанки страницы Confluence."""
+    return get_indexed_page(page_id)
+
+
+@mcp.tool(name="rag_confluence_list_indexed_pages")
+def rag_confluence_list_indexed_pages() -> str:
+    """Возвращает список индексированных страниц Confluence."""
+    return list_indexed()
+
+
+@mcp.tool(name="rag_confluence_get_collection_info")
+def rag_confluence_get_collection_info() -> str:
+    """Возвращает статистику коллекции Confluence."""
+    return get_collection_info()
+
+
+@mcp.tool(name="rag_allure_index_test_cases")
+def rag_allure_index_test_cases(
+    project_id: Optional[int] = None,
+    rql: Optional[str] = None,
+    page_size: int = 100,
+    max_test_cases: Optional[int] = None,
+) -> str:
+    """Индексирует тест-кейсы Allure TestOps."""
+    return index_allure_test_cases(project_id=project_id, rql=rql, page_size=page_size, max_test_cases=max_test_cases)
+
+
+@mcp.tool(name="rag_allure_reindex_test_cases")
+def rag_allure_reindex_test_cases(
+    project_id: Optional[int] = None,
+    rql: Optional[str] = None,
+    page_size: int = 100,
+    max_test_cases: Optional[int] = None,
+) -> str:
+    """Переиндексирует тест-кейсы Allure TestOps."""
+    return reindex_allure_test_cases(project_id=project_id, rql=rql, page_size=page_size, max_test_cases=max_test_cases)
+
+
+@mcp.tool(name="rag_allure_search_test_cases")
+def rag_allure_search_test_cases(
+    query: str,
+    limit: int = 5,
+    project_id: Optional[str] = None,
+    status: Optional[str] = None,
+    owner: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    chunk_types: Optional[List[str]] = None,
+    exclude_test_case_ids: Optional[List[str]] = None,
+    group_by: Optional[str] = "test_case_id",
+    group_size: int = 2,
+    search_vector: str = "content",
+    updated_after: Optional[str] = None,
+    updated_before: Optional[str] = None,
+    name_filter: Optional[str] = None,
+) -> str:
+    """Семантический поиск по Allure TestOps RAG."""
+    return search_allure_test_cases(
+        query=query,
+        limit=limit,
+        project_id=project_id,
+        status=status,
+        owner=owner,
+        tags=tags,
+        chunk_types=chunk_types,
+        exclude_test_case_ids=exclude_test_case_ids,
+        group_by=group_by,
+        group_size=group_size,
+        search_vector=search_vector,
+        updated_after=updated_after,
+        updated_before=updated_before,
+        name_filter=name_filter,
+    )
+
+
+@mcp.tool(name="rag_allure_get_indexed_test_case")
+def rag_allure_get_indexed_test_case(test_case_id: str) -> str:
+    """Возвращает индексированные чанки тест-кейса Allure."""
+    return get_indexed_allure_test_case(test_case_id)
+
+
+@mcp.tool(name="rag_allure_list_indexed_test_cases")
+def rag_allure_list_indexed_test_cases() -> str:
+    """Возвращает список индексированных тест-кейсов Allure."""
+    return list_indexed_allure_test_cases()
+
+
+@mcp.tool(name="rag_allure_get_collection_info")
+def rag_allure_get_collection_info() -> str:
+    """Возвращает статистику коллекции Allure."""
+    return get_allure_collection_info()
+
+
+@mcp.tool(name="rag_openapi_index_sources")
+def rag_openapi_index_sources(
+    source_ids: Optional[List[str] | str] = None,
+    sources_path: Optional[str] = None,
+) -> str:
+    """Инкрементально индексирует OpenAPI sources из registry."""
+    return run_tool(
+        logger,
+        "rag_openapi_index_sources",
+        lambda: sync_sources(kinds=["openapi"], source_ids=normalize_string_list(source_ids), sources_path=sources_path),
+    )
+
+
+@mcp.tool(name="rag_openapi_reindex_sources")
+def rag_openapi_reindex_sources(
+    source_ids: Optional[List[str] | str] = None,
+    sources_path: Optional[str] = None,
+) -> str:
+    """Принудительно переиндексирует OpenAPI sources из registry."""
+    logger.info("[rag_openapi_reindex_sources] source_ids=%s", source_ids)
+
+    def _action() -> dict:
+        registry = load_registry(sources_path)
+        requested_ids = set(normalize_string_list(source_ids) or [])
+        results = []
+        for source in registry.openapi:
+            if requested_ids and source.id not in requested_ids:
+                continue
+            results.append(index_openapi_source(source, reindex=True))
+        return {"results": results}
+
+    return run_tool(logger, "rag_openapi_reindex_sources", _action)
+
+
+@mcp.tool(name="rag_openapi_search_operations")
+def rag_openapi_search_operations(
+    query: str,
+    limit: int = 5,
+    service: Optional[str] = None,
+    method: Optional[str] = None,
+    path: Optional[str] = None,
+) -> str:
+    """Семантический поиск по OpenAPI operations. Всегда возвращает компактные кандидаты."""
+    limit = clamp_limit(limit)
+    logger.info("[rag_openapi_search_operations] query=%r, service=%s, method=%s, path=%s", query, service, method, path)
+
+    def _action() -> dict:
+        inferred_methods = None if method else infer_http_methods_from_query(query)
+        results = search_openapi_operations_qdrant(
+            query_vector=embed_single(query),
+            limit=limit,
+            service=service,
+            method=method.upper() if method else None,
+            methods=inferred_methods,
+            path=path,
+        )
+        return {
+            "query": query,
+            "results_count": len(results),
+            "requested_method": method.upper() if method else None,
+            "inferred_methods": inferred_methods,
+            "results_format": "compact",
+            "usage": (
+                "Search returns candidate operations. For a final curl use "
+                "rag_openapi_find_curl for query-based curl generation or "
+                "rag_openapi_build_curl_template with service/method/path from the chosen result. "
+                "For the full OpenAPI contract use rag_openapi_get_operation."
+            ),
+            "results": results,
+        }
+
+    return run_tool(logger, "rag_openapi_search_operations", _action)
+
+
+@mcp.tool(name="rag_openapi_find_curl")
+def rag_openapi_find_curl(
+    query: str,
+    service: Optional[str] = None,
+    method: Optional[str] = None,
+    path: Optional[str] = None,
+    limit: int = 3,
+) -> str:
+    """Находит лучшую OpenAPI operation по запросу и возвращает один curl-шаблон."""
+    limit = clamp_limit(limit)
+    logger.info("[rag_openapi_find_curl] query=%r, service=%s, method=%s, path=%s", query, service, method, path)
+
+    def _action() -> dict:
+        inferred_methods = None if method else infer_http_methods_from_query(query)
+        candidates = search_openapi_operations_qdrant(
+            query_vector=embed_single(query),
+            limit=limit,
+            service=service,
+            method=method.upper() if method else None,
+            methods=inferred_methods,
+            path=path,
+        )
+        if not candidates:
+            return {
+                "found": False,
+                "query": query,
+                "service": service,
+                "requested_method": method.upper() if method else None,
+                "inferred_methods": inferred_methods,
+                "candidates_count": 0,
+                "candidates": [],
+            }
+
+        selected = candidates[0]
+        selected_service = str(selected.get("service") or service or "")
+        selected_method = str(selected.get("method") or method or "").upper()
+        selected_path = str(selected.get("path") or path or "")
+        operation = get_openapi_operation_from_store(selected_service, selected_method, selected_path)
+        if not operation:
+            return {
+                "found": False,
+                "query": query,
+                "service": service,
+                "requested_method": method.upper() if method else None,
+                "inferred_methods": inferred_methods,
+                "selected_operation": selected,
+                "candidates_count": len(candidates),
+                "candidates": candidates,
+                "message": "Selected operation was found in search results but not found by exact service/method/path lookup.",
+            }
+
+        return {
+            "found": True,
+            "query": query,
+            "service": selected_service,
+            "requested_method": method.upper() if method else None,
+            "inferred_methods": inferred_methods,
+            "selected_operation": selected,
+            "candidates_count": len(candidates),
+            "candidates": candidates,
+            "curl": build_curl_template(operation),
+        }
+
+    return run_tool(logger, "rag_openapi_find_curl", _action)
+
+
+@mcp.tool(name="rag_openapi_get_operation")
+def rag_openapi_get_operation(service: str, method: str, path: str) -> str:
+    """Возвращает точную OpenAPI operation."""
+    logger.info("[rag_openapi_get_operation] service=%s method=%s path=%s", service, method, path)
+
+    def _action() -> dict:
+        operation = get_openapi_operation_from_store(service, method, path)
+        return {"found": bool(operation), "operation": operation}
+
+    return run_tool(logger, "rag_openapi_get_operation", _action)
+
+
+@mcp.tool(name="rag_openapi_build_attachment")
+def rag_openapi_build_attachment(service: str, method: str, path: str, format: str = "json") -> str:
+    """Формирует вложение OpenAPI operation с curlTemplate."""
+    return build_openapi_attachment(service, method, path, format=format)
+
+
+@mcp.tool(name="rag_openapi_build_curl_template")
+def rag_openapi_build_curl_template(service: str, method: str, path: str) -> str:
+    """Возвращает curl-шаблон для OpenAPI operation."""
+    logger.info("[rag_openapi_build_curl_template] service=%s method=%s path=%s", service, method, path)
+
+    def _action() -> dict:
+        operation = get_openapi_operation_from_store(service, method, path)
+        if not operation:
+            return {"found": False, "service": service, "method": method.upper(), "path": path}
+        return {
+            "found": True,
+            "service": service,
+            "method": method.upper(),
+            "path": path,
+            "curl": build_curl_template(operation),
+        }
+
+    return run_tool(logger, "rag_openapi_build_curl_template", _action)
+
+
+@mcp.tool(name="rag_openapi_list_indexed_operations")
+def rag_openapi_list_indexed_operations(service: Optional[str] = None) -> str:
+    """Возвращает список индексированных OpenAPI operations."""
+    return run_tool(
+        logger,
+        "rag_openapi_list_indexed_operations",
+        lambda: {"operations": list_indexed_operations(service), "service": service},
+    )
+
+
+@mcp.tool(name="rag_openapi_get_collection_info")
+def rag_openapi_get_collection_info() -> str:
+    """Возвращает статистику коллекции OpenAPI."""
+    return run_tool(logger, "rag_openapi_get_collection_info", get_openapi_collection_stats)
+
+
+@mcp.tool(name="rag_sync_sources")
+def rag_sync_sources(
+    kinds: Optional[List[str] | str] = None,
+    source_ids: Optional[List[str] | str] = None,
+    stale_after_minutes: Optional[int] = 1440,
+    sources_path: Optional[str] = None,
+    force: bool = False,
+) -> str:
+    """Инкрементально синхронизирует Confluence, Allure и OpenAPI sources."""
+    return run_tool(
+        logger,
+        "rag_sync_sources",
+        lambda: sync_sources(
+            kinds=normalize_string_list(kinds),
+            source_ids=normalize_string_list(source_ids),
+            stale_after_minutes=stale_after_minutes,
+            sources_path=sources_path,
+            force=force,
+        ),
+    )
+
+
+@mcp.tool(name="rag_list_sources")
+def rag_list_sources(sources_path: Optional[str] = None) -> str:
+    """Возвращает source registry."""
+    return run_tool(logger, "rag_list_sources", lambda: list_sources(sources_path=sources_path))
+
+
+@mcp.tool(name="rag_get_sync_status")
+def rag_get_sync_status(
+    kind: Optional[str] = None,
+    source_id_prefix: Optional[str] = None,
+    limit: int = 50,
+) -> str:
+    """Возвращает sync state из Qdrant. Требует kind и/или source_id_prefix, чтобы не выгружать всю коллекцию."""
+    return run_tool(
+        logger,
+        "rag_get_sync_status",
+        lambda: get_sync_status(
+            kind=kind.strip() or None if isinstance(kind, str) else kind,
+            source_id_prefix=source_id_prefix.strip() or None if isinstance(source_id_prefix, str) else source_id_prefix,
+            limit=limit,
+        ),
+    )
+
+
+@mcp.tool(name="rag_get_source_sync_status")
+def rag_get_source_sync_status(sources_path: Optional[str] = None) -> str:
+    """Возвращает per-source freshness status: last_checked_at, last_synced_at, next_due_at, due."""
+    return run_tool(
+        logger,
+        "rag_get_source_sync_status",
+        lambda: get_source_sync_status(sources_path=sources_path),
+    )
 
 
 if __name__ == "__main__":
