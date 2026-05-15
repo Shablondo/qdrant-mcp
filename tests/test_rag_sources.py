@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from rag_sources import load_rag_sources
+from qdrant_mcp.rag_sources import load_rag_sources
 
 
 def test_loads_registry_with_all_kinds(tmp_path: Path) -> None:

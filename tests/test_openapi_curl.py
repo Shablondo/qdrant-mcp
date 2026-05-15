@@ -1,4 +1,4 @@
-from openapi_curl import build_curl_template
+from qdrant_mcp.openapi_curl import build_curl_template
 
 
 def test_builds_json_curl_template() -> None:
