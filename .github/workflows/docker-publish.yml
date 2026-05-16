@@ -2,7 +2,7 @@ name: CI & Publish
 
 on:
   pull_request:
-    branches: [master]
+    branches: [develop, master]
   push:
     branches: [master]
     tags: ["v*.*.*"]
