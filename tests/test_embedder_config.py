@@ -2,21 +2,13 @@ import importlib
 import os
 import sys
 import unittest
-from pathlib import Path
 from unittest.mock import patch
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR = PROJECT_ROOT / "src"
-
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
 
 
 def load_embedder_with_env(env: dict[str, str]):
     with patch.dict(os.environ, env, clear=True):
-        sys.modules.pop("embedder", None)
-        return importlib.import_module("embedder")
+        sys.modules.pop("qdrant_mcp.embedder", None)
+        return importlib.import_module("qdrant_mcp.embedder")
 
 
 class EmbedderConfigTests(unittest.TestCase):

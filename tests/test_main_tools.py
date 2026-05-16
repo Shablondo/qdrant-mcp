@@ -1,8 +1,16 @@
 import json
 from copy import deepcopy
 
-import main
-from main import mcp
+import qdrant_mcp.main as main
+from qdrant_mcp.main import mcp
+
+
+def _get_tool(name):
+    return mcp._local_provider._components[f"tool:{name}@"]
+
+
+def _get_tool_names():
+    return {key.split(":")[1].rstrip("@") for key in mcp._local_provider._components if key.startswith("tool:")}
 
 
 def _create_sku_operation() -> dict:
@@ -21,7 +29,7 @@ def _create_sku_operation() -> dict:
 
 
 def test_registers_explicit_rag_tool_names() -> None:
-    tools = set(mcp._tool_manager._tools)
+    tools = _get_tool_names()
 
     expected = {
         "rag_confluence_index_page_tree",
@@ -42,7 +50,7 @@ def test_registers_explicit_rag_tool_names() -> None:
 
 
 def test_does_not_register_legacy_tool_names() -> None:
-    tools = set(mcp._tool_manager._tools)
+    tools = _get_tool_names()
     legacy_tools = {
         "index_page_tree",
         "reindex_page_tree",
@@ -65,13 +73,13 @@ def test_does_not_register_legacy_tool_names() -> None:
 
 
 def test_openapi_search_tool_does_not_expose_include_details() -> None:
-    params = mcp._tool_manager._tools["rag_openapi_search_operations"].parameters["properties"]
+    params = _get_tool("rag_openapi_search_operations").parameters["properties"]
 
     assert "include_details" not in params
 
 
 def test_sync_sources_tool_accepts_stringified_list_arguments() -> None:
-    params = mcp._tool_manager._tools["rag_sync_sources"].parameters["properties"]
+    params = _get_tool("rag_sync_sources").parameters["properties"]
 
     for name in ("kinds", "source_ids"):
         allowed_types = {
@@ -92,7 +100,7 @@ def test_sync_sources_parses_kilocode_stringified_arrays(monkeypatch) -> None:
         lambda **kwargs: calls.update(kwargs) or {"totals": {}, "results": {}},
     )
 
-    tool_fn = main.mcp._tool_manager._tools["rag_sync_sources"].fn
+    tool_fn = _get_tool("rag_sync_sources").fn
     response = json.loads(
         tool_fn(
             kinds='["openapi"]',
@@ -116,7 +124,7 @@ def test_get_sync_status_tool_normalizes_blank_filters_and_passes_limit(monkeypa
         lambda **kwargs: calls.update(kwargs) or {"states": [], "states_count": 0},
     )
 
-    tool_fn = main.mcp._tool_manager._tools["rag_get_sync_status"].fn
+    tool_fn = _get_tool("rag_get_sync_status").fn
     response = json.loads(tool_fn(kind="", source_id_prefix="", limit=25))
 
     assert response == {"states": [], "states_count": 0}
@@ -133,7 +141,7 @@ def test_openapi_search_infers_http_method_from_action_query(monkeypatch) -> Non
     monkeypatch.setattr(main, "embed_single", lambda query: [0.1, 0.2, 0.3])
     monkeypatch.setattr(main, "search_openapi_operations_qdrant", fake_search)
 
-    tool_fn = main.mcp._tool_manager._tools["rag_openapi_search_operations"].fn
+    tool_fn = _get_tool("rag_openapi_search_operations").fn
     response = json.loads(
         tool_fn(
             query="добавление штрихкода barcode sku catalog",
@@ -172,7 +180,7 @@ def test_openapi_find_curl_returns_single_curl_without_full_payload(monkeypatch)
         lambda operation: "curl --location 'https://fulfillment-catalog-pp-test.k8s.5post-stage-5.salt.x5.ru/api/v1/sku'",
     )
 
-    tool_fn = main.mcp._tool_manager._tools["rag_openapi_find_curl"].fn
+    tool_fn = _get_tool("rag_openapi_find_curl").fn
     response = json.loads(tool_fn(query="сделай curl для создания товара", service="fulfillment-catalog"))
 
     assert response["found"] is True

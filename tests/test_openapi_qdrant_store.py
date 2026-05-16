@@ -1,7 +1,7 @@
 import inspect
 from types import SimpleNamespace
 
-from openapi_qdrant_store import compact_operation_result, search_operations
+from qdrant_mcp.openapi_qdrant_store import compact_operation_result, search_operations
 
 
 def _operation() -> dict:
@@ -148,8 +148,8 @@ def test_search_operations_returns_compact_results_by_default(monkeypatch) -> No
         def query_points(self, **kwargs):
             return SimpleNamespace(points=[SimpleNamespace(payload=_operation(), score=0.87564)])
 
-    monkeypatch.setattr("openapi_qdrant_store.ensure_collection_exists", lambda: None)
-    monkeypatch.setattr("openapi_qdrant_store._client", lambda: FakeClient())
+    monkeypatch.setattr("qdrant_mcp.openapi_qdrant_store.ensure_collection_exists", lambda: None)
+    monkeypatch.setattr("qdrant_mcp.openapi_qdrant_store._client", lambda: FakeClient())
 
     results = search_operations(query_vector=[0.1, 0.2, 0.3])
 
