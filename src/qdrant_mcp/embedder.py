@@ -29,7 +29,7 @@ EMBED_API_BASE = os.environ.get("EMBED_API_BASE", "https://api.openai.com/v1")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "") or os.environ.get("COPILOT_API_KEY", "")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-3-large")
 EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
-EMBED_BATCH_SIZE = 32
+EMBED_BATCH_SIZE = int(os.environ.get("EMBED_BATCH_SIZE", "32"))
 
 
 def _resolve_base_url() -> str:
