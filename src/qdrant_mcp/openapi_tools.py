@@ -145,6 +145,8 @@ def rag_openapi_find_curl(
             "found": True,
             "query": query,
             "service": selected_service,
+            "requested_method": method.upper() if method else None,
+            "inferred_methods": inferred_methods,
             "selected_operation": selected,
             "candidates_count": len(candidates),
             "candidates": candidates,
