@@ -15,6 +15,7 @@ embedder.py — клиент к OpenAI-compatible Embeddings API.
     EMBED_API_BASE=https://api.openai.com/v1
 """
 
+import functools
 import logging
 import os
 from typing import List
@@ -50,6 +51,7 @@ def _resolve_base_url() -> str:
     )
 
 
+@functools.lru_cache(maxsize=1)
 def _get_client() -> OpenAI:
     """Создаёт OpenAI клиент для embeddings API."""
     if not OPENAI_API_KEY:

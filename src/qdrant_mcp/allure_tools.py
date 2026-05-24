@@ -41,7 +41,6 @@ def _search_allure_test_cases(
                 query, limit, project_id, group_by, search_vector)
 
     def _action() -> dict:
-        ensure_allure_collection_exists()
         results = search_allure_test_cases_qdrant(
             query_vector=embed_single(query),
             limit=limit,
