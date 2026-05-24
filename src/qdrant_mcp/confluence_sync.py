@@ -13,7 +13,7 @@ from qdrant_mcp.indexer import (
     _html_to_text,
 )
 from qdrant_mcp.qdrant_store import delete_page, upsert_page_chunks_batch
-from qdrant_mcp.sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_states_batch
+from qdrant_mcp.sync_state_store import SyncState, delete_sync_state, list_sync_states, load_sync_states_dict, save_sync_states_batch
 
 
 @dataclass
@@ -47,6 +47,7 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
     visited: set[str] = set()
     root_page_id = str(source.root_page_id)
     pages_to_index: list[dict[str, Any]] = []
+    states_dict = load_sync_states_dict("confluence_page", f"{source.id}:")
 
     def walk(client: Any, page_id: str) -> None:
         if page_id in visited:
@@ -64,7 +65,8 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
             "version": str(page.get("version") or ""),
             "content_hash": content_hash(plain_text),
         }
-        previous = get_sync_state("confluence_page", _state_id(source.id, page_id))
+        state_id = _state_id(source.id, page_id)
+        previous = states_dict.get(state_id)
         if page_changed(current, previous):
             chunks = _chunk_text(plain_text, page.get("title", "")) if plain_text else []
             if chunks:

@@ -17,8 +17,8 @@ from qdrant_mcp.openapi_qdrant_store import (
 from qdrant_mcp.sync_state_store import (
     SyncState,
     delete_sync_state,
-    get_sync_state,
     list_sync_states,
+    load_sync_states_dict,
     save_sync_states_batch,
 )
 
@@ -65,6 +65,8 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
     if reindex:
         delete_operations_by_source(source.id)
 
+    states_dict = load_sync_states_dict("openapi_operation", f"{source.id}:")
+
     updated = 0
     skipped = 0
     seen_keys: set[str] = set()
@@ -74,7 +76,7 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
         operation_key = str(operation["operation_key"])
         seen_keys.add(operation_key)
         state_id = _state_id(source.id, operation_key)
-        previous = get_sync_state("openapi_operation", state_id)
+        previous = states_dict.get(state_id)
         if not reindex and previous and previous.get("content_hash") == operation["operation_hash"]:
             skipped += 1
             continue

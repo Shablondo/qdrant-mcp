@@ -56,7 +56,7 @@ def test_sync_allure_source_processes_test_cases_in_parallel(monkeypatch) -> Non
 
     monkeypatch.setenv("RAG_ALLURE_SYNC_MAX_WORKERS", "2")
     monkeypatch.setattr("qdrant_mcp.allure_sync.AllureTestOpsClient", FakeAllureClient)
-    monkeypatch.setattr("qdrant_mcp.allure_sync.get_sync_state", lambda kind, source_id: None)
+    monkeypatch.setattr("qdrant_mcp.allure_sync.load_sync_states_dict", lambda kind, prefix: {})
     monkeypatch.setattr(
         "qdrant_mcp.allure_sync.save_sync_states_batch",
         lambda states: saved_states.extend(states),
