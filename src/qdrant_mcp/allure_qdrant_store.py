@@ -4,7 +4,6 @@ allure_qdrant_store.py — хранение и поиск тест-кейсов 
 
 from __future__ import annotations
 
-import functools
 import logging
 import os
 import threading
@@ -12,6 +11,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from qdrant_client import QdrantClient
+from qdrant_mcp.qdrant_utils import get_qdrant_client
 from qdrant_client.models import (
     Distance,
     FieldCondition,
@@ -31,15 +31,6 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://host.docker.internal:6333")
 ALLURE_QDRANT_COLLECTION = os.environ.get("ALLURE_QDRANT_COLLECTION", "allure_test_cases")
 EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
 _ENSURE_COLLECTION_LOCK = threading.Lock()
-
-UPSERT_BATCH_SIZE = 64
-LIST_SCROLL_LIMIT = 500
-TEST_CASE_SCROLL_LIMIT = 1000
-
-
-@functools.lru_cache(maxsize=1)
-def _get_client() -> QdrantClient:
-    return QdrantClient(url=QDRANT_URL)
 
 
 def _is_collection_exists_error(exc: Exception) -> bool:
@@ -121,7 +112,7 @@ def _build_filter(
 
 def ensure_collection_exists() -> None:
     """Создаёт коллекцию тест-кейсов Allure при отсутствии."""
-    client = _get_client()
+    client = get_qdrant_client()
     with _ENSURE_COLLECTION_LOCK:
         existing = [collection.name for collection in client.get_collections().collections]
 
@@ -163,58 +154,9 @@ def ensure_collection_exists() -> None:
             )
 
 
-def upsert_test_case_chunks(
-    test_case_id: str,
-    chunks: List[Dict[str, Any]],
-    content_vectors: List[List[float]],
-    title_vectors: List[List[float]],
-    metadata: Dict[str, Any],
-) -> int:
-    """Сохраняет чанки тест-кейса, заменяя предыдущую версию."""
-    if len(chunks) != len(content_vectors):
-        raise ValueError(
-            f"chunks ({len(chunks)}) и content_vectors ({len(content_vectors)}) имеют разную длину"
-        )
-    if len(chunks) != len(title_vectors):
-        raise ValueError(
-            f"chunks ({len(chunks)}) и title_vectors ({len(title_vectors)}) имеют разную длину"
-        )
-
-    client = _get_client()
-    ensure_collection_exists()
-    delete_test_cases([test_case_id])
-
-    if not chunks:
-        return 0
-
-    points: List[PointStruct] = []
-    for index, (chunk, content_vec, title_vec) in enumerate(
-        zip(chunks, content_vectors, title_vectors)
-    ):
-        points.append(
-            PointStruct(
-                id=str(uuid.uuid4()),
-                vector={"content": content_vec, "title": title_vec},
-                payload={
-                    "test_case_id": test_case_id,
-                    "chunk_index": index,
-                    "chunk_type": chunk.get("chunk_type", "content"),
-                    "text": chunk.get("text", ""),
-                    **metadata,
-                },
-            )
-        )
-
-    for start in range(0, len(points), UPSERT_BATCH_SIZE):
-        batch = points[start : start + UPSERT_BATCH_SIZE]
-        client.upsert(collection_name=ALLURE_QDRANT_COLLECTION, points=batch)
-
-    logger.info("Тест-кейс %s: вставлено %s chunks", test_case_id, len(points))
-    return len(points)
-
 
 def upsert_test_cases_batch(test_cases: list[dict[str, Any]]) -> int:
-    client = _get_client()
+    client = get_qdrant_client()
     ensure_collection_exists()
 
     all_test_case_ids = [tc["test_case_id"] for tc in test_cases]
@@ -259,7 +201,7 @@ def delete_test_cases(test_case_ids: List[str]) -> None:
     """Удаляет набор тест-кейсов из коллекции."""
     if not test_case_ids:
         return
-    client = _get_client()
+    client = get_qdrant_client()
     client.delete(
         collection_name=ALLURE_QDRANT_COLLECTION,
         points_selector=Filter(
@@ -270,7 +212,7 @@ def delete_test_cases(test_case_ids: List[str]) -> None:
 
 def delete_project_test_cases(project_id: str) -> None:
     """Удаляет все тест-кейсы проекта."""
-    client = _get_client()
+    client = get_qdrant_client()
     client.delete(
         collection_name=ALLURE_QDRANT_COLLECTION,
         points_selector=Filter(
@@ -298,7 +240,7 @@ def search(
     search_vector: str = "content",
 ) -> List[Dict[str, Any]]:
     """Семантический поиск по индексу тест-кейсов Allure."""
-    client = _get_client()
+    client = get_qdrant_client()
     query_filter = _build_filter(
         test_case_id_filter=test_case_id_filter,
         project_id_filter=project_id_filter,
@@ -339,7 +281,7 @@ def search(
 
 def get_test_case_chunks(test_case_id: str) -> List[Dict[str, Any]]:
     """Возвращает все чанки тест-кейса из индекса."""
-    client = _get_client()
+    client = get_qdrant_client()
     results, _ = client.scroll(
         collection_name=ALLURE_QDRANT_COLLECTION,
         scroll_filter=Filter(
@@ -370,7 +312,7 @@ def get_test_case_chunks(test_case_id: str) -> List[Dict[str, Any]]:
 
 def list_indexed_test_cases() -> List[Dict[str, Any]]:
     """Возвращает уникальные тест-кейсы из индекса."""
-    client = _get_client()
+    client = get_qdrant_client()
     seen: Dict[str, Dict[str, Any]] = {}
     offset = None
 
@@ -406,7 +348,7 @@ def list_indexed_test_cases() -> List[Dict[str, Any]]:
 
 def get_collection_stats() -> Dict[str, Any]:
     """Возвращает статистику коллекции тест-кейсов."""
-    client = _get_client()
+    client = get_qdrant_client()
     info = client.get_collection(collection_name=ALLURE_QDRANT_COLLECTION)
     return {
         "collection": ALLURE_QDRANT_COLLECTION,
