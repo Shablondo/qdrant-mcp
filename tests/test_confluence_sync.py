@@ -64,7 +64,7 @@ def test_sync_confluence_source_walks_root_and_nested_children(monkeypatch) -> N
             return None
 
     monkeypatch.setattr("qdrant_mcp.confluence_sync._get_http_client", lambda: DummyClient())
-    monkeypatch.setattr("qdrant_mcp.confluence_sync._fetch_page", lambda client, page_id: pages[page_id])
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._fetch_page", lambda client, page_id: (pages[page_id], None))
     monkeypatch.setattr("qdrant_mcp.confluence_sync._fetch_child_pages", lambda client, page_id: children[page_id])
     monkeypatch.setattr("qdrant_mcp.confluence_sync._html_to_text", lambda html: html)
     monkeypatch.setattr("qdrant_mcp.confluence_sync._chunk_text", lambda text, title: [f"{title}: {text}"])

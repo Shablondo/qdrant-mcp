@@ -47,6 +47,7 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
     visited: set[str] = set()
     root_page_id = str(source.root_page_id)
     pages_to_index: list[dict[str, Any]] = []
+    error_details: list[dict[str, str]] = []
     states_dict = load_sync_states_dict("confluence_page", f"{source.id}:")
 
     def walk(client: Any, page_id: str) -> None:
@@ -55,9 +56,10 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
         visited.add(page_id)
         seen_page_ids.add(page_id)
 
-        page = _fetch_page(client, page_id)
-        if not page:
+        page, fetch_error = _fetch_page(client, page_id)
+        if page is None:
             stats.errors += 1
+            error_details.append({"page_id": page_id, "message": fetch_error or "unknown error"})
             return
 
         plain_text = _html_to_text(page.get("body_html", ""))
@@ -154,4 +156,5 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
         "skipped": stats.skipped,
         "deleted": stats.deleted,
         "errors": stats.errors,
+        "error_details": error_details,
     }
