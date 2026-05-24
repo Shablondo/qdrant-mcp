@@ -211,6 +211,43 @@ def upsert_test_case_chunks(
     return len(points)
 
 
+def upsert_test_cases_batch(test_cases: list[dict[str, Any]]) -> int:
+    client = _get_client()
+    ensure_collection_exists()
+
+    all_test_case_ids = [tc["test_case_id"] for tc in test_cases]
+    if all_test_case_ids:
+        delete_test_cases(all_test_case_ids)
+
+    all_points: list[PointStruct] = []
+    for tc in test_cases:
+        for index, (chunk, content_vec, title_vec) in enumerate(
+            zip(tc["chunks"], tc["content_vectors"], tc["title_vectors"])
+        ):
+            all_points.append(
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector={"content": content_vec, "title": title_vec},
+                    payload={
+                        "test_case_id": tc["test_case_id"],
+                        "chunk_index": index,
+                        "chunk_type": chunk.get("chunk_type", "content"),
+                        "text": chunk.get("text", ""),
+                        **tc["metadata"],
+                    },
+                )
+            )
+
+    total = 0
+    for start in range(0, len(all_points), UPSERT_BATCH_SIZE):
+        batch = all_points[start : start + UPSERT_BATCH_SIZE]
+        client.upsert(collection_name=ALLURE_QDRANT_COLLECTION, points=batch)
+        total += len(batch)
+
+    logger.info("Batch upsert: %s точек для %s тест-кейсов", total, len(test_cases))
+    return total
+
+
 def delete_test_cases(test_case_ids: List[str]) -> None:
     """Удаляет набор тест-кейсов из коллекции."""
     if not test_case_ids:
