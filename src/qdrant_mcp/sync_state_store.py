@@ -94,6 +94,37 @@ def save_sync_state(state: SyncState) -> None:
     )
 
 
+def save_sync_states_batch(states: list[SyncState]) -> None:
+    if not states:
+        return
+    client = _client()
+    _ensure_collection(client)
+    for state in states:
+        client.delete(
+            collection_name=SYNC_STATE_COLLECTION,
+            points_selector=_filter(state.kind, state.source_id),
+        )
+    points = [
+        PointStruct(
+            id=str(uuid.uuid4()),
+            vector=[0.0],
+            payload={
+                "kind": state.kind,
+                "source_id": state.source_id,
+                "content_hash": state.content_hash,
+                "version": state.version,
+                "synced_at": state.synced_at,
+                **state.metadata,
+            },
+        )
+        for state in states
+    ]
+    client.upsert(
+        collection_name=SYNC_STATE_COLLECTION,
+        points=points,
+    )
+
+
 def delete_sync_state(kind: str, source_id: str) -> None:
     client = _client()
     _ensure_collection(client)

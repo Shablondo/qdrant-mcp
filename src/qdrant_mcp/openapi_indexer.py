@@ -12,9 +12,15 @@ from qdrant_mcp.openapi_qdrant_store import (
     delete_operations_by_source,
     get_operation,
     operation_title,
-    upsert_operation,
+    upsert_operations_batch,
 )
-from qdrant_mcp.sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_state
+from qdrant_mcp.sync_state_store import (
+    SyncState,
+    delete_sync_state,
+    get_sync_state,
+    list_sync_states,
+    save_sync_states_batch,
+)
 
 
 def _state_id(source_id: str, operation_key: str) -> str:
@@ -93,13 +99,15 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
         all_content_vectors = embed_texts(all_content_texts)
         all_title_vectors = embed_texts(all_title_texts)
 
-        for i, op in enumerate(changed_ops):
-            upsert_operation(
-                op["operation"],
-                content_vector=all_content_vectors[i],
-                title_vector=all_title_vectors[i],
-            )
-            save_sync_state(
+        upsert_operations_batch(
+            operations=[op["operation"] for op in changed_ops],
+            content_vectors=all_content_vectors,
+            title_vectors=all_title_vectors,
+            operation_keys=[op["operation_key"] for op in changed_ops],
+        )
+
+        save_sync_states_batch(
+            [
                 SyncState(
                     kind="openapi_operation",
                     source_id=op["state_id"],
@@ -114,8 +122,11 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
                         "spec_hash": op["spec_hash"],
                     },
                 )
-            )
-            updated += 1
+                for op in changed_ops
+            ]
+        )
+
+        updated = len(changed_ops)
 
     deleted = 0
     for state in list_sync_states("openapi_operation", f"{source.id}:"):

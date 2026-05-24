@@ -107,6 +107,30 @@ def upsert_operation(
     )
 
 
+def upsert_operations_batch(
+    operations: list[dict[str, Any]],
+    *,
+    content_vectors: list[list[float]],
+    title_vectors: list[list[float]],
+    operation_keys: list[str],
+) -> None:
+    ensure_collection_exists()
+    client = _client()
+    delete_operations(operation_keys)
+    points = [
+        PointStruct(
+            id=str(uuid.uuid4()),
+            vector={"content": content_vectors[i], "title": title_vectors[i]},
+            payload=operations[i],
+        )
+        for i in range(len(operations))
+    ]
+    client.upsert(
+        collection_name=OPENAPI_QDRANT_COLLECTION,
+        points=points,
+    )
+
+
 def delete_operations(operation_keys: list[str]) -> None:
     if not operation_keys:
         return
