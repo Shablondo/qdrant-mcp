@@ -12,14 +12,14 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import tiktoken
 
-from allure_client import AllureTestOpsClient
-from allure_qdrant_store import (
+from qdrant_mcp.allure_client import AllureTestOpsClient
+from qdrant_mcp.allure_qdrant_store import (
     delete_project_test_cases,
     delete_test_cases,
     ensure_collection_exists,
     upsert_test_case_chunks,
 )
-from embedder import embed_texts
+from qdrant_mcp.embedder import embed_texts
 
 logger = logging.getLogger(__name__)
 

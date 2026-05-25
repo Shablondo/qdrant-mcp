@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import hashlib
 from typing import Any
 
-from embedder import embed_texts
-from indexer import (
+from qdrant_mcp.embedder import embed_texts
+from qdrant_mcp.indexer import (
     _build_title_vectors,
     _chunk_text,
     _fetch_child_pages,
@@ -13,8 +13,8 @@ from indexer import (
     _get_http_client,
     _html_to_text,
 )
-from qdrant_store import delete_page, upsert_page_chunks
-from sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_state
+from qdrant_mcp.qdrant_store import delete_page, upsert_page_chunks
+from qdrant_mcp.sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_state
 
 
 @dataclass

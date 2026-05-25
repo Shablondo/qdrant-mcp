@@ -10,11 +10,11 @@ import os
 import threading
 from typing import Any, Iterable
 
-from allure_sync import sync_allure_source
-from confluence_sync import sync_confluence_source
-from openapi_indexer import index_openapi_source
-from rag_sources import RagSources, load_rag_sources
-from sync_state_store import SyncState, get_sync_state, list_sync_states, save_sync_state
+from qdrant_mcp.allure_sync import sync_allure_source
+from qdrant_mcp.confluence_sync import sync_confluence_source
+from qdrant_mcp.openapi_indexer import index_openapi_source
+from qdrant_mcp.rag_sources import RagSources, load_rag_sources
+from qdrant_mcp.sync_state_store import SyncState, get_sync_state, list_sync_states, save_sync_state
 
 
 DEFAULT_RAG_SOURCES_PATH = Path(os.environ.get("RAG_SOURCES_PATH", "config/rag_sources.yaml"))

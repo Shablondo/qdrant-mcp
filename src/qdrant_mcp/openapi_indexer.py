@@ -3,18 +3,18 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from embedder import embed_single
-from openapi_curl import build_curl_template
-from openapi_fetcher import fetch_openapi_spec
-from openapi_parser import normalize_openapi_operations
-from openapi_qdrant_store import (
+from qdrant_mcp.embedder import embed_single
+from qdrant_mcp.openapi_curl import build_curl_template
+from qdrant_mcp.openapi_fetcher import fetch_openapi_spec
+from qdrant_mcp.openapi_parser import normalize_openapi_operations
+from qdrant_mcp.openapi_qdrant_store import (
     delete_operations,
     delete_operations_by_source,
     get_operation,
     operation_title,
     upsert_operation,
 )
-from sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_state
+from qdrant_mcp.sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_state
 
 
 def _state_id(source_id: str, operation_key: str) -> str:

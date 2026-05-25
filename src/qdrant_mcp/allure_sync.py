@@ -7,10 +7,10 @@ import json
 import os
 from typing import Any
 
-from allure_client import AllureTestOpsClient
-from allure_indexer import _extract_test_case_id, index_one_test_case
-from allure_qdrant_store import delete_test_cases
-from sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_state
+from qdrant_mcp.allure_client import AllureTestOpsClient
+from qdrant_mcp.allure_indexer import _extract_test_case_id, index_one_test_case
+from qdrant_mcp.allure_qdrant_store import delete_test_cases
+from qdrant_mcp.sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_state
 
 
 @dataclass
