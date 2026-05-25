@@ -22,7 +22,6 @@ openapi:
     env: pp-test
     api_docs_url: https://fulfillment-catalog-pp-test.k8s.5post-stage-5.salt.x5.ru/v3/api-docs
     request_base_url: https://fulfillment-catalog-pp-test.k8s.5post-stage-5.salt.x5.ru
-    aliases: [sku, catalog]
 """,
         encoding="utf-8",
     )
@@ -38,7 +37,6 @@ openapi:
     assert registry.openapi[0].swagger_ui_url == (
         "https://fulfillment-catalog-pp-test.k8s.5post-stage-5.salt.x5.ru/swagger-ui/index.html#/"
     )
-    assert registry.openapi[0].aliases == ["sku", "catalog"]
 
 
 def test_rejects_duplicate_source_ids(tmp_path: Path) -> None:

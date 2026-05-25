@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +31,6 @@ class OpenApiSource:
     api_docs_url: str
     request_base_url: str | None = None
     swagger_ui_url: str | None = None
-    aliases: list[str] = field(default_factory=list)
     sync_interval_minutes: int = 1440
 
     def __post_init__(self) -> None:
