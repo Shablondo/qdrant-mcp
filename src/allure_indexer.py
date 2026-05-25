@@ -411,6 +411,31 @@ def _build_chunks(
     return {"chunks": sections, "metadata": metadata, "name": name}
 
 
+def index_one_test_case(
+    client: AllureTestOpsClient,
+    test_case_id: int,
+    project_id: int,
+    full_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Индексирует один тест-кейс, заменяя его предыдущую версию в Qdrant."""
+    payload = full_payload or client.get_complete_test_case(test_case_id)
+    normalized = _build_chunks(test_case_id, payload, project_id)
+    chunks = normalized["chunks"]
+    if not chunks:
+        return {"test_case_id": str(test_case_id), "chunks_total": 0, "name": normalized["name"]}
+
+    content_vectors = embed_texts([chunk["text"] for chunk in chunks])
+    title_vectors = embed_texts([normalized["name"]] * len(chunks))
+    inserted = upsert_test_case_chunks(
+        test_case_id=str(test_case_id),
+        chunks=chunks,
+        content_vectors=content_vectors,
+        title_vectors=title_vectors,
+        metadata=normalized["metadata"],
+    )
+    return {"test_case_id": str(test_case_id), "chunks_total": inserted, "name": normalized["name"]}
+
+
 def run_index(
     *,
     project_id: Optional[int] = None,
@@ -458,24 +483,12 @@ def run_index(
                 continue
 
             try:
-                full_payload = client.get_complete_test_case(test_case_id)
-                normalized = _build_chunks(test_case_id, full_payload, resolved_project_id)
-                chunks = normalized["chunks"]
-                if not chunks:
+                result = index_one_test_case(client, test_case_id, resolved_project_id)
+                if not result["chunks_total"]:
                     logger.warning("Тест-кейс %s не содержит индексируемого контента", test_case_id)
                     continue
-
-                content_vectors = embed_texts([chunk["text"] for chunk in chunks])
-                title_vectors = embed_texts([normalized["name"]] * len(chunks))
-                inserted = upsert_test_case_chunks(
-                    test_case_id=str(test_case_id),
-                    chunks=chunks,
-                    content_vectors=content_vectors,
-                    title_vectors=title_vectors,
-                    metadata=normalized["metadata"],
-                )
                 stats.test_cases_indexed += 1
-                stats.chunks_total += inserted
+                stats.chunks_total += result["chunks_total"]
             except Exception as exc:
                 logger.error("Ошибка индексации test_case=%s: %s", test_case_id, exc, exc_info=True)
                 stats.errors += 1

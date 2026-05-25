@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://host.docker.internal:6333")
 ALLURE_QDRANT_COLLECTION = os.environ.get("ALLURE_QDRANT_COLLECTION", "allure_test_cases")
 EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
+_ENSURE_COLLECTION_LOCK = threading.Lock()
 
 UPSERT_BATCH_SIZE = 64
 LIST_SCROLL_LIMIT = 500
@@ -36,6 +38,11 @@ TEST_CASE_SCROLL_LIMIT = 1000
 
 def _get_client() -> QdrantClient:
     return QdrantClient(url=QDRANT_URL)
+
+
+def _is_collection_exists_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "already exists" in message and ALLURE_QDRANT_COLLECTION.lower() in message
 
 
 def _serialize_point(point: Any) -> Dict[str, Any]:
@@ -113,39 +120,45 @@ def _build_filter(
 def ensure_collection_exists() -> None:
     """Создаёт коллекцию тест-кейсов Allure при отсутствии."""
     client = _get_client()
-    existing = [collection.name for collection in client.get_collections().collections]
+    with _ENSURE_COLLECTION_LOCK:
+        existing = [collection.name for collection in client.get_collections().collections]
 
-    if ALLURE_QDRANT_COLLECTION in existing:
-        return
+        if ALLURE_QDRANT_COLLECTION in existing:
+            return
 
-    logger.info(
-        "Создание коллекции '%s' для Allure TestOps dim=%s",
-        ALLURE_QDRANT_COLLECTION,
-        EMBED_DIMENSIONS,
-    )
-    client.create_collection(
-        collection_name=ALLURE_QDRANT_COLLECTION,
-        vectors_config={
-            "content": VectorParams(size=EMBED_DIMENSIONS, distance=Distance.COSINE),
-            "title": VectorParams(size=EMBED_DIMENSIONS, distance=Distance.COSINE),
-        },
-    )
-
-    for field_name, field_schema in (
-        ("test_case_id", PayloadSchemaType.KEYWORD),
-        ("project_id", PayloadSchemaType.KEYWORD),
-        ("status", PayloadSchemaType.KEYWORD),
-        ("owner", PayloadSchemaType.KEYWORD),
-        ("tags", PayloadSchemaType.KEYWORD),
-        ("chunk_type", PayloadSchemaType.KEYWORD),
-        ("updated_at", PayloadSchemaType.DATETIME),
-        ("name", PayloadSchemaType.TEXT),
-    ):
-        client.create_payload_index(
-            collection_name=ALLURE_QDRANT_COLLECTION,
-            field_name=field_name,
-            field_schema=field_schema,
+        logger.info(
+            "Создание коллекции '%s' для Allure TestOps dim=%s",
+            ALLURE_QDRANT_COLLECTION,
+            EMBED_DIMENSIONS,
         )
+        try:
+            client.create_collection(
+                collection_name=ALLURE_QDRANT_COLLECTION,
+                vectors_config={
+                    "content": VectorParams(size=EMBED_DIMENSIONS, distance=Distance.COSINE),
+                    "title": VectorParams(size=EMBED_DIMENSIONS, distance=Distance.COSINE),
+                },
+            )
+        except Exception as exc:
+            if _is_collection_exists_error(exc):
+                return
+            raise
+
+        for field_name, field_schema in (
+            ("test_case_id", PayloadSchemaType.KEYWORD),
+            ("project_id", PayloadSchemaType.KEYWORD),
+            ("status", PayloadSchemaType.KEYWORD),
+            ("owner", PayloadSchemaType.KEYWORD),
+            ("tags", PayloadSchemaType.KEYWORD),
+            ("chunk_type", PayloadSchemaType.KEYWORD),
+            ("updated_at", PayloadSchemaType.DATETIME),
+            ("name", PayloadSchemaType.TEXT),
+        ):
+            client.create_payload_index(
+                collection_name=ALLURE_QDRANT_COLLECTION,
+                field_name=field_name,
+                field_schema=field_schema,
+            )
 
 
 def upsert_test_case_chunks(

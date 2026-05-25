@@ -17,6 +17,28 @@ def normalize_search_vector(search_vector: str) -> str:
     return search_vector if search_vector in VALID_SEARCH_VECTORS else "content"
 
 
+def normalize_string_list(value: Any) -> list[str] | None:
+    """Принимает list[str] или JSON-string list от MCP UI и возвращает нормальный список."""
+    if value is None:
+        return None
+    if isinstance(value, list | tuple | set):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+        if "," in stripped:
+            return [part.strip() for part in stripped.split(",") if part.strip()]
+        return [stripped]
+    return [str(value)]
+
+
 def json_response(payload: Dict[str, Any]) -> str:
     """Сериализует успешный ответ инструмента."""
     return json.dumps(payload, ensure_ascii=False, indent=2)
@@ -34,4 +56,3 @@ def run_tool(logger: logging.Logger, tool_name: str, action: Callable[[], Dict[s
     except Exception as exc:
         logger.error("[%s] Ошибка: %s", tool_name, exc, exc_info=True)
         return json_error(exc)
-
