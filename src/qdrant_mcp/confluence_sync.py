@@ -6,7 +6,6 @@ from typing import Any
 
 from qdrant_mcp.embedder import embed_texts
 from qdrant_mcp.indexer import (
-    _build_title_vectors,
     _chunk_text,
     _fetch_child_pages,
     _fetch_page,
@@ -47,6 +46,7 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
     seen_page_ids: set[str] = set()
     visited: set[str] = set()
     root_page_id = str(source.root_page_id)
+    pages_to_index: list[dict[str, Any]] = []
 
     def walk(client: Any, page_id: str) -> None:
         if page_id in visited:
@@ -67,36 +67,22 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
         previous = get_sync_state("confluence_page", _state_id(source.id, page_id))
         if page_changed(current, previous):
             chunks = _chunk_text(plain_text, page.get("title", "")) if plain_text else []
-            content_vectors = embed_texts(chunks) if chunks else []
-            title_vectors = _build_title_vectors(page.get("title", ""), len(chunks))
-            inserted = upsert_page_chunks(
-                page_id=page_id,
-                chunks=chunks,
-                content_vectors=content_vectors,
-                title_vectors=title_vectors,
-                metadata={
-                    "title": page.get("title", ""),
-                    "url": page.get("url", ""),
-                    "space_key": page.get("space_key", getattr(source, "space_key", "") or ""),
-                    "root_page_id": root_page_id,
-                    "last_modified": page.get("last_modified", ""),
-                },
-            )
-            save_sync_state(
-                SyncState(
-                    kind="confluence_page",
-                    source_id=_state_id(source.id, page_id),
-                    content_hash=current["content_hash"],
-                    version=current["version"],
-                    metadata={
-                        "root_source_id": source.id,
-                        "root_page_id": root_page_id,
+            if chunks:
+                pages_to_index.append(
+                    {
                         "page_id": page_id,
+                        "chunks": chunks,
                         "title": page.get("title", ""),
-                        "chunks_total": inserted,
-                    },
+                        "metadata": {
+                            "title": page.get("title", ""),
+                            "url": page.get("url", ""),
+                            "space_key": page.get("space_key", getattr(source, "space_key", "") or ""),
+                            "root_page_id": root_page_id,
+                            "last_modified": page.get("last_modified", ""),
+                        },
+                        "current": current,
+                    }
                 )
-            )
             stats.updated += 1
         else:
             stats.skipped += 1
@@ -106,6 +92,46 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
 
     with _get_http_client() as client:
         walk(client, root_page_id)
+
+    if pages_to_index:
+        all_chunk_texts: list[str] = []
+        all_titles: list[str] = []
+        for p in pages_to_index:
+            all_chunk_texts.extend(p["chunks"])
+            all_titles.append(p["title"])
+
+        all_content_vectors = embed_texts(all_chunk_texts)
+        all_title_vectors_raw = embed_texts(all_titles)
+
+        idx = 0
+        for i, p in enumerate(pages_to_index):
+            n = len(p["chunks"])
+            content_vectors = all_content_vectors[idx : idx + n]
+            idx += n
+            title_vectors = [all_title_vectors_raw[i]] * n
+
+            inserted = upsert_page_chunks(
+                page_id=p["page_id"],
+                chunks=p["chunks"],
+                content_vectors=content_vectors,
+                title_vectors=title_vectors,
+                metadata=p["metadata"],
+            )
+            save_sync_state(
+                SyncState(
+                    kind="confluence_page",
+                    source_id=_state_id(source.id, p["page_id"]),
+                    content_hash=p["current"]["content_hash"],
+                    version=p["current"]["version"],
+                    metadata={
+                        "root_source_id": source.id,
+                        "root_page_id": root_page_id,
+                        "page_id": p["page_id"],
+                        "title": p["title"],
+                        "chunks_total": inserted,
+                    },
+                )
+            )
 
     existing_states = list_sync_states("confluence_page", f"{source.id}:")
     for state in existing_states:
