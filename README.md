@@ -128,7 +128,7 @@ python -m rag_sync_cli source-status --sources-path config/rag_sources.yaml
 - `rag_get_source_sync_status()`
 - `rag_get_sync_status(kind="rag_source")`
 
-`rag_get_sync_status` предназначен для точечной диагностики sync state. Без `kind` или `source_id_prefix` он не выгружает коллекцию, чтобы не забивать контекст LLM; для подробностей передавайте фильтр, например `kind="openapi_operation", source_id_prefix="fulfillment-shipment-pp-test:"`.
+`rag_get_sync_status` предназначен для точечной диагностики sync state. Без `kind` или `source_id_prefix` он не выгружает коллекцию, чтобы не забивать контекст LLM; для подробностей передавайте фильтр, например `kind="openapi_operation", source_id_prefix="service-name-pp-test:"`.
 
 ### 4. Добавь в .kilocode/mcp.json
 
@@ -273,7 +273,7 @@ tag="smoke"
 status="Active"
 
 # Поиск по владельцу
-owner="Nikita.Shablinsky"
+owner="user.name"
 
 # Комбинированный запрос
 tag="smoke" and status="Active"
@@ -431,7 +431,7 @@ projectId=38
 ```json
 {
   "page_id": "1392589758",
-  "title": "7.25 Fulfillment Сервис фулфилмента",
+  "title": "7.25 Test Сервис Test",
   "url": "https://your-confluence.example.com/spaces/TEAM/pages/...",
   "space_key": "TEAM",
   "root_page_id": "1392589758",
@@ -459,7 +459,7 @@ projectId=38
   "project_id": "38",
   "name": "Проверка валидации формы логина",
   "status": "Active",
-  "owner": "Nikita.Shablinsky",
+  "owner": "User.Name",
   "updated_at": "2025-01-15T10:00:00Z",
   "tags": ["smoke", "regression"],
   "chunk_type": "scenario",
