@@ -309,7 +309,6 @@ def search_operations(
     methods: list[str] | None = None,
     path: str | None = None,
 ) -> list[dict[str, Any]]:
-    ensure_collection_exists()
     client = get_qdrant_client()
     query_filter = _operation_filter(service=service, method=method, methods=methods, path=path)
     points = client.query_points(
@@ -327,7 +326,6 @@ def search_operations(
 
 
 def get_operation(service: str, method: str, path: str) -> dict[str, Any] | None:
-    ensure_collection_exists()
     client = get_qdrant_client()
     points, _ = client.scroll(
         collection_name=OPENAPI_QDRANT_COLLECTION,
