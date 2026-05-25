@@ -11,6 +11,7 @@ indexer.py — рекурсивная индексация страниц Conflu
 """
 
 from dataclasses import dataclass
+import json
 import os
 import logging
 import re
@@ -210,10 +211,17 @@ def _fetch_page(client: httpx.Client, page_id: str) -> Tuple[Optional[Dict[str, 
     try:
         response = client.get(url, params=params)
         response.raise_for_status()
+        if not response.text.strip():
+            return None, f"HTTP {response.status_code}: empty response body"
         data = response.json()
     except httpx.HTTPStatusError as e:
         message = f"HTTP {e.response.status_code}"
         logger.warning(f"HTTP ошибка при получении страницы {page_id}: {e.response.status_code}")
+        return None, message
+    except json.JSONDecodeError:
+        preview = response.text[:200].replace("\n", " ")
+        message = f"HTTP {response.status_code}: invalid JSON, body: «{preview}»"
+        logger.warning(f"Не-JSON ответ при получении страницы {page_id}: {preview}")
         return None, message
     except Exception as e:
         message = str(e) or type(e).__name__
