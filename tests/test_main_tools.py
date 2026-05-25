@@ -7,11 +7,19 @@ import qdrant_mcp.sync_tools as sync_tools
 
 
 def _get_tool(name):
-    return mcp._tool_manager._tools[name]
+    if hasattr(mcp, "_tool_manager") and hasattr(mcp._tool_manager, "_tools"):
+        return mcp._tool_manager._tools[name]
+    if hasattr(mcp, "_local_provider") and hasattr(mcp._local_provider, "_components"):
+        return mcp._local_provider._components[f"tool:{name}@"]
+    raise RuntimeError("Cannot introspect MCP tools for this FastMCP version")
 
 
 def _get_tool_names():
-    return set(mcp._tool_manager._tools.keys())
+    if hasattr(mcp, "_tool_manager") and hasattr(mcp._tool_manager, "_tools"):
+        return set(mcp._tool_manager._tools.keys())
+    if hasattr(mcp, "_local_provider") and hasattr(mcp._local_provider, "_components"):
+        return {key.split(":")[1].rstrip("@") for key in mcp._local_provider._components if key.startswith("tool:")}
+    raise RuntimeError("Cannot introspect MCP tools for this FastMCP version")
 
 
 def _create_sku_operation() -> dict:

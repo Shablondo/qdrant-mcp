@@ -214,17 +214,6 @@ def delete_test_cases(test_case_ids: List[str]) -> None:
     )
 
 
-def delete_project_test_cases(project_id: str) -> None:
-    """Удаляет все тест-кейсы проекта."""
-    client = get_qdrant_client()
-    client.delete(
-        collection_name=ALLURE_QDRANT_COLLECTION,
-        points_selector=Filter(
-            must=[FieldCondition(key="project_id", match=MatchValue(value=project_id))]
-        ),
-    )
-
-
 def search(
     query_vector: List[float],
     *,
