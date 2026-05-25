@@ -57,3 +57,33 @@ openapi:
 
     with pytest.raises(ValueError, match="Duplicate RAG source id"):
         load_rag_sources(config_path)
+
+
+def test_ignores_unknown_yaml_keys(tmp_path: Path) -> None:
+    config_path = tmp_path / "rag_sources.yaml"
+    config_path.write_text(
+        """
+confluence:
+  - id: docs
+    root_page_id: "123"
+    unknown_field: should_be_ignored
+allure:
+  - id: allure-38
+    project_id: 38
+    some_random: value
+openapi:
+  - id: catalog
+    service: test
+    env: pp-test
+    api_docs_url: https://example.com/v3/api-docs
+    aliases: [legacy, alias]
+    obsolete: true
+""",
+        encoding="utf-8",
+    )
+
+    registry = load_rag_sources(config_path)
+
+    assert registry.confluence[0].id == "docs"
+    assert registry.allure[0].project_id == 38
+    assert registry.openapi[0].service == "test"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -85,12 +86,25 @@ def _validate_unique_ids(registry: RagSources) -> None:
         raise ValueError(f"Duplicate RAG source id: {', '.join(duplicates)}")
 
 
+def _known_fields(cls: type) -> set[str]:
+    return {f.name for f in dataclasses.fields(cls)}
+
+
+_CONFLUENCE_FIELDS = _known_fields(ConfluenceSource)
+_ALLURE_FIELDS = _known_fields(AllureSource)
+_OPENAPI_FIELDS = _known_fields(OpenApiSource)
+
+
+def _filter_known(item: dict[str, Any], known: set[str]) -> dict[str, Any]:
+    return {k: v for k, v in item.items() if k in known}
+
+
 def load_rag_sources(path: str | Path) -> RagSources:
     data = _read_yaml(Path(path))
     registry = RagSources(
-        confluence=[ConfluenceSource(**item) for item in _items(data, "confluence")],
-        allure=[AllureSource(**item) for item in _items(data, "allure")],
-        openapi=[OpenApiSource(**item) for item in _items(data, "openapi")],
+        confluence=[ConfluenceSource(**_filter_known(item, _CONFLUENCE_FIELDS)) for item in _items(data, "confluence")],
+        allure=[AllureSource(**_filter_known(item, _ALLURE_FIELDS)) for item in _items(data, "allure")],
+        openapi=[OpenApiSource(**_filter_known(item, _OPENAPI_FIELDS)) for item in _items(data, "openapi")],
     )
     _validate_unique_ids(registry)
     return registry
