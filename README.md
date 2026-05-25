@@ -557,7 +557,6 @@ qdrant-mcp/
 │       └── docker-publish.yml
 ├── build/
 │   └── Dockerfile
-├── config/
 ├── tests/
 └── src/
     └── qdrant_mcp/
