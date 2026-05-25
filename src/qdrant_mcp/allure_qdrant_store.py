@@ -32,6 +32,10 @@ ALLURE_QDRANT_COLLECTION = os.environ.get("ALLURE_QDRANT_COLLECTION", "allure_te
 EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
 _ENSURE_COLLECTION_LOCK = threading.Lock()
 
+UPSERT_BATCH_SIZE = int(os.environ.get("ALLURE_UPSERT_BATCH_SIZE", "64"))
+LIST_SCROLL_LIMIT = int(os.environ.get("ALLURE_LIST_SCROLL_LIMIT", "500"))
+TEST_CASE_SCROLL_LIMIT = int(os.environ.get("ALLURE_TEST_CASE_SCROLL_LIMIT", "1000"))
+
 
 def _is_collection_exists_error(exc: Exception) -> bool:
     message = str(exc).lower()

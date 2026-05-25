@@ -31,9 +31,9 @@ QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "confluence_docs")
 EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
 _ENSURE_COLLECTION_LOCK = threading.Lock()
 
-UPSERT_BATCH_SIZE = 64
-PAGE_SCROLL_LIMIT = 1000
-LIST_SCROLL_LIMIT = 500
+UPSERT_BATCH_SIZE = int(os.environ.get("QDRANT_UPSERT_BATCH_SIZE", "64"))
+PAGE_SCROLL_LIMIT = int(os.environ.get("QDRANT_PAGE_SCROLL_LIMIT", "1000"))
+LIST_SCROLL_LIMIT = int(os.environ.get("QDRANT_LIST_SCROLL_LIMIT", "500"))
 CONTEXT_SEPARATOR = "\n\n...[пропущено]...\n\n"
 
 
