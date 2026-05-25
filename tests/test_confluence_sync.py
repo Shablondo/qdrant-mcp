@@ -69,7 +69,7 @@ def test_sync_confluence_source_walks_root_and_nested_children(monkeypatch) -> N
     monkeypatch.setattr("qdrant_mcp.confluence_sync._html_to_text", lambda html: html)
     monkeypatch.setattr("qdrant_mcp.confluence_sync._chunk_text", lambda text, title: [f"{title}: {text}"])
     monkeypatch.setattr("qdrant_mcp.confluence_sync.embed_texts", lambda texts: [[0.1, 0.2] for _ in texts])
-    monkeypatch.setattr("qdrant_mcp.confluence_sync.get_sync_state", lambda kind, source_id: None)
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.load_sync_states_dict", lambda kind, prefix: {})
     monkeypatch.setattr(
         "qdrant_mcp.confluence_sync.save_sync_states_batch",
         lambda states: saved_states.extend(states),

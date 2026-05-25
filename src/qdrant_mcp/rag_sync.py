@@ -346,7 +346,7 @@ def sync_sources(
             if requested_ids and source.id not in requested_ids:
                 continue
             tasks.append(
-                ("confluence", source, lambda item: sync_confluence_source(item, stale_after_minutes))
+                ("confluence", source, lambda item, _src=source: sync_confluence_source(_src, stale_after_minutes))
             )
 
     if "allure" in requested_kinds:
@@ -354,7 +354,7 @@ def sync_sources(
             if requested_ids and source.id not in requested_ids:
                 continue
             tasks.append(
-                ("allure", source, lambda item: sync_allure_source(item, stale_after_minutes))
+                ("allure", source, lambda item, _src=source: sync_allure_source(_src, stale_after_minutes))
             )
 
     if "openapi" in requested_kinds:
@@ -362,7 +362,7 @@ def sync_sources(
             if requested_ids and source.id not in requested_ids:
                 continue
             tasks.append(
-                ("openapi", source, lambda item: index_openapi_source(item, reindex=False))
+                ("openapi", source, lambda item, _src=source: index_openapi_source(_src, reindex=False))
             )
 
     results = _run_source_tasks(tasks, stale_after_minutes=stale_after_minutes, force=force)

@@ -3,6 +3,7 @@ qdrant_store.py — обёртка над qdrant-client для хранения 
 проиндексированных страниц Confluence.
 """
 
+import functools
 import logging
 import os
 import threading
@@ -36,6 +37,7 @@ LIST_SCROLL_LIMIT = 500
 CONTEXT_SEPARATOR = "\n\n...[пропущено]...\n\n"
 
 
+@functools.lru_cache(maxsize=1)
 def _get_client() -> QdrantClient:
     """Создаёт клиент Qdrant."""
     return QdrantClient(url=QDRANT_URL)

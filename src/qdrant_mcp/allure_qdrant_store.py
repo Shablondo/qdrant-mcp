@@ -4,6 +4,7 @@ allure_qdrant_store.py — хранение и поиск тест-кейсов 
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import threading
@@ -36,6 +37,7 @@ LIST_SCROLL_LIMIT = 500
 TEST_CASE_SCROLL_LIMIT = 1000
 
 
+@functools.lru_cache(maxsize=1)
 def _get_client() -> QdrantClient:
     return QdrantClient(url=QDRANT_URL)
 
@@ -217,7 +219,12 @@ def upsert_test_cases_batch(test_cases: list[dict[str, Any]]) -> int:
 
     all_test_case_ids = [tc["test_case_id"] for tc in test_cases]
     if all_test_case_ids:
-        delete_test_cases(all_test_case_ids)
+        client.delete(
+            collection_name=ALLURE_QDRANT_COLLECTION,
+            points_selector=Filter(
+                must=[FieldCondition(key="test_case_id", match=MatchAny(any=all_test_case_ids))]
+            ),
+        )
 
     all_points: list[PointStruct] = []
     for tc in test_cases:

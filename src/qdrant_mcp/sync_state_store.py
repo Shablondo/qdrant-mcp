@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import functools
 import os
 import threading
 from typing import Any
@@ -26,6 +27,7 @@ class SyncState:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@functools.lru_cache(maxsize=1)
 def _client() -> QdrantClient:
     return QdrantClient(url=QDRANT_URL)
 
@@ -164,3 +166,9 @@ def list_sync_states(
             break
         offset = next_offset
     return states
+
+
+def load_sync_states_dict(kind: str, source_id_prefix: str) -> dict[str, dict[str, Any]]:
+    """Загружает все sync state для заданного kind и префикса в локальный dict."""
+    states = list_sync_states(kind=kind, source_id_prefix=source_id_prefix)
+    return {str(state.get("source_id", "")): state for state in states}

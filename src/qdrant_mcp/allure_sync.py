@@ -14,8 +14,8 @@ from qdrant_mcp.embedder import embed_texts
 from qdrant_mcp.sync_state_store import (
     SyncState,
     delete_sync_state,
-    get_sync_state,
     list_sync_states,
+    load_sync_states_dict,
     save_sync_states_batch,
 )
 
@@ -59,7 +59,7 @@ def _state_id(source_id: str, test_case_id: int | str) -> str:
     return f"{source_id}:{test_case_id}"
 
 
-def _prepare_test_case(source: Any, test_case_id: int) -> dict[str, Any]:
+def _prepare_test_case(source: Any, test_case_id: int, states_dict: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Fetches test case payload and builds chunks without embedding."""
     try:
         with AllureTestOpsClient() as client:
@@ -71,7 +71,7 @@ def _prepare_test_case(source: Any, test_case_id: int) -> dict[str, Any]:
                 tags=payload.get("tags", []),
             )
             state_id = _state_id(source.id, test_case_id)
-            previous = get_sync_state("allure_test_case", state_id)
+            previous = states_dict.get(state_id)
             if previous and previous.get("content_hash") == fingerprint:
                 return {"status": "skipped", "test_case_id": str(test_case_id)}
 
@@ -125,11 +125,14 @@ def sync_allure_source(source: Any, stale_after_minutes: int | None = None) -> d
         _max_workers_from_env("RAG_ALLURE_SYNC_MAX_WORKERS", DEFAULT_ALLURE_SYNC_MAX_WORKERS),
         len(test_case_ids) or 1,
     )
+
+    states_dict = load_sync_states_dict("allure_test_case", f"{source.id}:")
+
     if max_workers <= 1:
-        case_results = [_prepare_test_case(source, test_case_id) for test_case_id in test_case_ids]
+        case_results = [_prepare_test_case(source, test_case_id, states_dict) for test_case_id in test_case_ids]
     else:
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="rag-sync-allure") as executor:
-            futures = [executor.submit(_prepare_test_case, source, test_case_id) for test_case_id in test_case_ids]
+            futures = [executor.submit(_prepare_test_case, source, test_case_id, states_dict) for test_case_id in test_case_ids]
             case_results = [future.result() for future in futures]
 
     changed_cases = [r for r in case_results if r.get("status") == "changed"]

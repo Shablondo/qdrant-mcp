@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import threading
@@ -27,6 +28,7 @@ EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
 _ENSURE_COLLECTION_LOCK = threading.Lock()
 
 
+@functools.lru_cache(maxsize=1)
 def _client() -> QdrantClient:
     return QdrantClient(url=QDRANT_URL)
 
@@ -116,7 +118,13 @@ def upsert_operations_batch(
 ) -> None:
     ensure_collection_exists()
     client = _client()
-    delete_operations(operation_keys)
+    if operation_keys:
+        client.delete(
+            collection_name=OPENAPI_QDRANT_COLLECTION,
+            points_selector=Filter(
+                must=[FieldCondition(key="operation_key", match=MatchAny(any=operation_keys))]
+            ),
+        )
     points = [
         PointStruct(
             id=str(uuid.uuid4()),
