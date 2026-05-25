@@ -7,8 +7,10 @@ test case -> scenario -> attachments -> tags.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import threading
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -69,6 +71,24 @@ def _extract_items(payload: Any) -> List[Dict[str, Any]]:
     return []
 
 
+_thread_local = threading.local()
+
+
+def _get_thread_client() -> httpx.Client:
+    if not hasattr(_thread_local, "client"):
+        _thread_local.client = httpx.Client(
+            headers={
+                "Authorization": f"Api-Token {ALLURE_TESTOPS_API_TOKEN}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            timeout=ALLURE_TESTOPS_TIMEOUT,
+            verify=ALLURE_TESTOPS_SSL_VERIFY,
+            follow_redirects=True,
+        )
+    return _thread_local.client
+
+
 class AllureTestOpsClient:
     """Минималистичный sync-клиент для индексатора."""
 
@@ -79,20 +99,11 @@ class AllureTestOpsClient:
             raise ValueError("ALLURE_TESTOPS_API_TOKEN не задан")
 
         self.default_project_id = _parse_default_project_id()
-        self._client = httpx.Client(
-            headers={
-                "Authorization": f"Api-Token {ALLURE_TESTOPS_API_TOKEN}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            timeout=ALLURE_TESTOPS_TIMEOUT,
-            verify=ALLURE_TESTOPS_SSL_VERIFY,
-            follow_redirects=True,
-        )
+        self._client = _get_thread_client()
 
     def close(self) -> None:
-        """Закрывает underlying HTTP client."""
-        self._client.close()
+        """Закрывает underlying HTTP client (no-op — thread-local client is reused)."""
+        pass
 
     def __enter__(self) -> "AllureTestOpsClient":
         return self
@@ -131,7 +142,7 @@ class AllureTestOpsClient:
 
         try:
             return response.json()
-        except Exception as exc:
+        except json.JSONDecodeError as exc:
             raise AllureTestOpsError(
                 f"Не удалось декодировать JSON для {endpoint}: {exc}"
             ) from exc

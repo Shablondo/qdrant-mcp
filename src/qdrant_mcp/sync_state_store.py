@@ -7,6 +7,7 @@ import threading
 from typing import Any
 import uuid
 
+from qdrant_mcp.qdrant_utils import get_qdrant_client
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
 
@@ -26,17 +27,13 @@ class SyncState:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-def _client() -> QdrantClient:
-    return QdrantClient(url=QDRANT_URL)
-
-
 def _is_collection_exists_error(exc: Exception) -> bool:
     message = str(exc).lower()
     return "already exists" in message and SYNC_STATE_COLLECTION.lower() in message
 
 
 def _ensure_collection(client: QdrantClient | None = None) -> None:
-    client = client or _client()
+    client = client or get_qdrant_client()
     with _ENSURE_COLLECTION_LOCK:
         existing = [collection.name for collection in client.get_collections().collections]
         if SYNC_STATE_COLLECTION in existing:
@@ -62,7 +59,7 @@ def _filter(kind: str, source_id: str) -> Filter:
 
 
 def get_sync_state(kind: str, source_id: str) -> dict[str, Any] | None:
-    client = _client()
+    client = get_qdrant_client()
     _ensure_collection(client)
     points, _ = client.scroll(
         collection_name=SYNC_STATE_COLLECTION,
@@ -77,7 +74,7 @@ def get_sync_state(kind: str, source_id: str) -> dict[str, Any] | None:
 
 
 def save_sync_state(state: SyncState) -> None:
-    client = _client()
+    client = get_qdrant_client()
     _ensure_collection(client)
     delete_sync_state(state.kind, state.source_id)
     payload = {
@@ -94,8 +91,39 @@ def save_sync_state(state: SyncState) -> None:
     )
 
 
+def save_sync_states_batch(states: list[SyncState]) -> None:
+    if not states:
+        return
+    client = get_qdrant_client()
+    _ensure_collection(client)
+    for state in states:
+        client.delete(
+            collection_name=SYNC_STATE_COLLECTION,
+            points_selector=_filter(state.kind, state.source_id),
+        )
+    points = [
+        PointStruct(
+            id=str(uuid.uuid4()),
+            vector=[0.0],
+            payload={
+                "kind": state.kind,
+                "source_id": state.source_id,
+                "content_hash": state.content_hash,
+                "version": state.version,
+                "synced_at": state.synced_at,
+                **state.metadata,
+            },
+        )
+        for state in states
+    ]
+    client.upsert(
+        collection_name=SYNC_STATE_COLLECTION,
+        points=points,
+    )
+
+
 def delete_sync_state(kind: str, source_id: str) -> None:
-    client = _client()
+    client = get_qdrant_client()
     _ensure_collection(client)
     client.delete(collection_name=SYNC_STATE_COLLECTION, points_selector=_filter(kind, source_id))
 
@@ -105,7 +133,7 @@ def list_sync_states(
     source_id_prefix: str | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    client = _client()
+    client = get_qdrant_client()
     _ensure_collection(client)
     must = []
     if kind:
@@ -133,3 +161,9 @@ def list_sync_states(
             break
         offset = next_offset
     return states
+
+
+def load_sync_states_dict(kind: str, source_id_prefix: str) -> dict[str, dict[str, Any]]:
+    """Загружает все sync state для заданного kind и префикса в локальный dict."""
+    states = list_sync_states(kind=kind, source_id_prefix=source_id_prefix)
+    return {str(state.get("source_id", "")): state for state in states}

@@ -8,9 +8,16 @@ import os
 from typing import Any
 
 from qdrant_mcp.allure_client import AllureTestOpsClient
-from qdrant_mcp.allure_indexer import _extract_test_case_id, index_one_test_case
-from qdrant_mcp.allure_qdrant_store import delete_test_cases
-from qdrant_mcp.sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_state
+from qdrant_mcp.allure_indexer import _build_chunks, _extract_test_case_id
+from qdrant_mcp.allure_qdrant_store import delete_test_cases, upsert_test_cases_batch
+from qdrant_mcp.embedder import embed_texts
+from qdrant_mcp.sync_state_store import (
+    SyncState,
+    delete_sync_state,
+    list_sync_states,
+    load_sync_states_dict,
+    save_sync_states_batch,
+)
 
 
 @dataclass
@@ -52,7 +59,8 @@ def _state_id(source_id: str, test_case_id: int | str) -> str:
     return f"{source_id}:{test_case_id}"
 
 
-def _sync_one_test_case(source: Any, test_case_id: int) -> dict[str, Any]:
+def _prepare_test_case(source: Any, test_case_id: int, states_dict: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Fetches test case payload and builds chunks without embedding."""
     try:
         with AllureTestOpsClient() as client:
             payload = client.get_complete_test_case(test_case_id)
@@ -63,26 +71,27 @@ def _sync_one_test_case(source: Any, test_case_id: int) -> dict[str, Any]:
                 tags=payload.get("tags", []),
             )
             state_id = _state_id(source.id, test_case_id)
-            previous = get_sync_state("allure_test_case", state_id)
+            previous = states_dict.get(state_id)
             if previous and previous.get("content_hash") == fingerprint:
                 return {"status": "skipped", "test_case_id": str(test_case_id)}
 
-            result = index_one_test_case(client, test_case_id, source.project_id, full_payload=payload)
-            save_sync_state(
-                SyncState(
-                    kind="allure_test_case",
-                    source_id=state_id,
-                    content_hash=fingerprint,
-                    version=str(payload.get("test_case", {}).get("updatedDate") or ""),
-                    metadata={
-                        "root_source_id": source.id,
-                        "test_case_id": str(test_case_id),
-                        "project_id": str(source.project_id),
-                        "name": result.get("name", ""),
-                    },
-                )
-            )
-            return {"status": "updated", "test_case_id": str(test_case_id)}
+            normalized = _build_chunks(test_case_id, payload, source.project_id)
+            chunks = normalized["chunks"]
+            if not chunks:
+                return {
+                    "status": "no_content",
+                    "test_case_id": str(test_case_id),
+                    "name": normalized["name"],
+                }
+
+            return {
+                "status": "changed",
+                "test_case_id": str(test_case_id),
+                "name": normalized["name"],
+                "metadata": normalized["metadata"],
+                "chunks": chunks,
+                "fingerprint": fingerprint,
+            }
     except Exception as exc:
         return {"status": "error", "test_case_id": str(test_case_id), "message": str(exc)}
 
@@ -102,25 +111,89 @@ def sync_allure_source(source: Any, stale_after_minutes: int | None = None) -> d
         seen_ids.add(str(test_case_id))
         test_case_ids.append(test_case_id)
 
+    if not test_case_ids:
+        return {
+            "source_id": source.id,
+            "project_id": source.project_id,
+            "updated": 0,
+            "skipped": 0,
+            "deleted": 0,
+            "errors": stats.errors,
+        }
+
     max_workers = min(
         _max_workers_from_env("RAG_ALLURE_SYNC_MAX_WORKERS", DEFAULT_ALLURE_SYNC_MAX_WORKERS),
         len(test_case_ids) or 1,
     )
+
+    states_dict = load_sync_states_dict("allure_test_case", f"{source.id}:")
+
     if max_workers <= 1:
-        case_results = [_sync_one_test_case(source, test_case_id) for test_case_id in test_case_ids]
+        case_results = [_prepare_test_case(source, test_case_id, states_dict) for test_case_id in test_case_ids]
     else:
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="rag-sync-allure") as executor:
-            futures = [executor.submit(_sync_one_test_case, source, test_case_id) for test_case_id in test_case_ids]
+            futures = [executor.submit(_prepare_test_case, source, test_case_id, states_dict) for test_case_id in test_case_ids]
             case_results = [future.result() for future in futures]
 
-    for case_result in case_results:
-        status = case_result.get("status")
-        if status == "updated":
-            stats.updated += 1
-        elif status == "skipped":
+    changed_cases = [r for r in case_results if r.get("status") == "changed"]
+    error_details: list[dict[str, str]] = []
+    for r in case_results:
+        status = r.get("status")
+        if status == "skipped":
             stats.skipped += 1
-        else:
+        elif status == "error":
             stats.errors += 1
+            error_details.append(
+                {
+                    "test_case_id": str(r.get("test_case_id", "")),
+                    "message": str(r.get("message", "unknown error")),
+                }
+            )
+
+    if changed_cases:
+        all_chunk_texts: list[str] = []
+        all_names: list[str] = []
+        for r in changed_cases:
+            all_chunk_texts.extend(chunk["text"] for chunk in r["chunks"])
+            all_names.append(r["name"])
+
+        all_content_vectors = embed_texts(all_chunk_texts)
+        all_title_vectors_raw = embed_texts(all_names)
+
+        batch_cases: list[dict[str, Any]] = []
+        idx = 0
+        for i, r in enumerate(changed_cases):
+            n = len(r["chunks"])
+            batch_cases.append(
+                {
+                    "test_case_id": str(r["test_case_id"]),
+                    "chunks": r["chunks"],
+                    "content_vectors": all_content_vectors[idx : idx + n],
+                    "title_vectors": [all_title_vectors_raw[i]] * n,
+                    "metadata": r["metadata"],
+                }
+            )
+            idx += n
+
+        upsert_test_cases_batch(batch_cases)
+        save_sync_states_batch(
+            [
+                SyncState(
+                    kind="allure_test_case",
+                    source_id=_state_id(source.id, r["test_case_id"]),
+                    content_hash=r["fingerprint"],
+                    version="",
+                    metadata={
+                        "root_source_id": source.id,
+                        "test_case_id": str(r["test_case_id"]),
+                        "project_id": str(source.project_id),
+                        "name": r["name"],
+                    },
+                )
+                for r in changed_cases
+            ]
+        )
+        stats.updated = len(changed_cases)
 
     existing_states = list_sync_states("allure_test_case", f"{source.id}:")
     for state in existing_states:
@@ -137,4 +210,5 @@ def sync_allure_source(source: Any, stale_after_minutes: int | None = None) -> d
         "skipped": stats.skipped,
         "deleted": stats.deleted,
         "errors": stats.errors,
+        "error_details": error_details,
     }

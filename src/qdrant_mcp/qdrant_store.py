@@ -10,6 +10,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from qdrant_client import QdrantClient
+from qdrant_mcp.qdrant_utils import get_qdrant_client
 from qdrant_client.models import (
     Distance,
     FieldCondition,
@@ -30,15 +31,10 @@ QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "confluence_docs")
 EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
 _ENSURE_COLLECTION_LOCK = threading.Lock()
 
-UPSERT_BATCH_SIZE = 64
-PAGE_SCROLL_LIMIT = 1000
-LIST_SCROLL_LIMIT = 500
+UPSERT_BATCH_SIZE = int(os.environ.get("QDRANT_UPSERT_BATCH_SIZE", "64"))
+PAGE_SCROLL_LIMIT = int(os.environ.get("QDRANT_PAGE_SCROLL_LIMIT", "1000"))
+LIST_SCROLL_LIMIT = int(os.environ.get("QDRANT_LIST_SCROLL_LIMIT", "500"))
 CONTEXT_SEPARATOR = "\n\n...[пропущено]...\n\n"
-
-
-def _get_client() -> QdrantClient:
-    """Создаёт клиент Qdrant."""
-    return QdrantClient(url=QDRANT_URL)
 
 
 def _is_collection_exists_error(exc: Exception) -> bool:
@@ -181,7 +177,7 @@ def ensure_collection_exists() -> None:
     Метрика Cosine, размерность EMBED_DIMENSIONS.
     Использует named vectors для заголовков и контента.
     """
-    client = _get_client()
+    client = get_qdrant_client()
     with _ENSURE_COLLECTION_LOCK:
         existing = [collection.name for collection in client.get_collections().collections]
 
@@ -231,59 +227,38 @@ def ensure_collection_exists() -> None:
         logger.info("Коллекция '%s' создана с named vectors и индексами payload", QDRANT_COLLECTION)
 
 
-def upsert_page_chunks(
-    page_id: str,
-    chunks: List[str],
-    content_vectors: List[List[float]],
-    title_vectors: List[List[float]],
-    metadata: Dict[str, Any],
-) -> int:
-    """
-    Сохраняет чанки страницы в Qdrant с named vectors.
-    Перед вставкой удаляет все старые points для данного page_id.
-    """
-    if len(chunks) != len(content_vectors):
-        raise ValueError(f"chunks ({len(chunks)}) и content_vectors ({len(content_vectors)}) имеют разную длину")
-    if len(chunks) != len(title_vectors):
-        raise ValueError(f"chunks ({len(chunks)}) и title_vectors ({len(title_vectors)}) имеют разную длину")
 
-    client = _get_client()
+def upsert_page_chunks_batch(pages: list[dict[str, Any]]) -> int:
+    client = get_qdrant_client()
     ensure_collection_exists()
-    _delete_page_points(client, page_id)
 
-    if not chunks:
-        logger.debug("Нет чанков для страницы %s, пропускаем", page_id)
-        return 0
-
-    points = []
-    for index, (chunk_text, content_vec, title_vec) in enumerate(
-        zip(chunks, content_vectors, title_vectors)
-    ):
-        vector_data: Dict[str, Any] = {
-            "content": content_vec,
-            "title": title_vec,
-        }
-
-        points.append(
-            PointStruct(
-                id=str(uuid.uuid4()),
-                vector=vector_data,
-                payload={
-                    "page_id": page_id,
-                    "chunk_index": index,
-                    "text": chunk_text,
-                    **metadata,
-                },
+    all_points: list[PointStruct] = []
+    for page in pages:
+        _delete_page_points(client, page["page_id"])
+        for index, (chunk_text, content_vec, title_vec) in enumerate(
+            zip(page["chunks"], page["content_vectors"], page["title_vectors"])
+        ):
+            all_points.append(
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector={"content": content_vec, "title": title_vec},
+                    payload={
+                        "page_id": page["page_id"],
+                        "chunk_index": index,
+                        "text": chunk_text,
+                        **page["metadata"],
+                    },
+                )
             )
-        )
 
-    for start in range(0, len(points), UPSERT_BATCH_SIZE):
-        batch = points[start : start + UPSERT_BATCH_SIZE]
+    total = 0
+    for start in range(0, len(all_points), UPSERT_BATCH_SIZE):
+        batch = all_points[start : start + UPSERT_BATCH_SIZE]
         client.upsert(collection_name=QDRANT_COLLECTION, points=batch)
-        logger.debug("Upsert батч %s: %s points", start // UPSERT_BATCH_SIZE + 1, len(batch))
+        total += len(batch)
 
-    logger.info("Страница %s: вставлено %s chunks с named vectors", page_id, len(points))
-    return len(points)
+    logger.info("Batch upsert: %s точек для %s страниц", total, len(pages))
+    return total
 
 
 def _delete_page_points(client: QdrantClient, page_id: str) -> None:
@@ -299,7 +274,7 @@ def _delete_page_points(client: QdrantClient, page_id: str) -> None:
 
 def delete_page(page_id: str) -> None:
     """Удаляет все points для указанной страницы."""
-    client = _get_client()
+    client = get_qdrant_client()
     _delete_page_points(client, page_id)
 
 
@@ -308,7 +283,7 @@ def delete_page_tree(root_page_id: str) -> None:
     Удаляет все points для корневой страницы и всего её дерева.
     Использует поле root_page_id для фильтрации.
     """
-    client = _get_client()
+    client = get_qdrant_client()
     client.delete(
         collection_name=QDRANT_COLLECTION,
         points_selector=Filter(
@@ -336,7 +311,7 @@ def search(
     """
     Семантический поиск по коллекции с поддержкой named vectors и расширения контекста.
     """
-    client = _get_client()
+    client = get_qdrant_client()
     query_filter = _build_filter(
         page_id_filter=page_id_filter,
         space_key_filter=space_key_filter,
@@ -393,7 +368,7 @@ def search_hybrid(
     """
     Совместимый интерфейс для поиска без sparse-векторов.
     """
-    client = _get_client()
+    client = get_qdrant_client()
     query_filter = _build_filter(
         page_id_filter=page_id_filter,
         space_key_filter=space_key_filter,
@@ -426,7 +401,7 @@ def get_page_chunks(page_id: str) -> List[Dict[str, Any]]:
     """
     Возвращает все проиндексированные чанки страницы из Qdrant.
     """
-    client = _get_client()
+    client = get_qdrant_client()
     results = _scroll_page_points(client, page_id, with_vectors=False)
     chunks = [
         {
@@ -446,7 +421,7 @@ def list_indexed_pages() -> List[Dict[str, Any]]:
     """
     Возвращает список уникальных проиндексированных страниц.
     """
-    client = _get_client()
+    client = get_qdrant_client()
     seen_pages: Dict[str, Dict[str, Any]] = {}
     offset = None
 
@@ -483,7 +458,7 @@ def get_collection_stats() -> Dict[str, Any]:
     """
     Возвращает статистику коллекции Qdrant.
     """
-    client = _get_client()
+    client = get_qdrant_client()
     info = client.get_collection(collection_name=QDRANT_COLLECTION)
     return {
         "collection": QDRANT_COLLECTION,
@@ -505,7 +480,7 @@ def recommend_similar_pages(
     """
     Находит страницы, похожие на указанную (Recommendation API).
     """
-    client = _get_client()
+    client = get_qdrant_client()
     positive_vector = _get_page_vector(client, page_id, search_vector)
     if positive_vector is None:
         logger.warning("Страница %s не найдена в индексе или не содержит вектор '%s'", page_id, search_vector)
@@ -540,7 +515,7 @@ def discover_by_examples(
     """
     Находит документы, похожие на набор примеров (Discovery API).
     """
-    client = _get_client()
+    client = get_qdrant_client()
 
     positive_vectors = [
         vector

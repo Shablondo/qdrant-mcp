@@ -149,7 +149,7 @@ def test_search_operations_returns_compact_results_by_default(monkeypatch) -> No
             return SimpleNamespace(points=[SimpleNamespace(payload=_operation(), score=0.87564)])
 
     monkeypatch.setattr("qdrant_mcp.openapi_qdrant_store.ensure_collection_exists", lambda: None)
-    monkeypatch.setattr("qdrant_mcp.openapi_qdrant_store._client", lambda: FakeClient())
+    monkeypatch.setattr("qdrant_mcp.openapi_qdrant_store.get_qdrant_client", lambda: FakeClient())
 
     results = search_operations(query_vector=[0.1, 0.2, 0.3])
 

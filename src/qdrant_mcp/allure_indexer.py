@@ -1,10 +1,9 @@
 """
-allure_indexer.py — индексация тест-кейсов Allure TestOps в Qdrant.
+allure_indexer.py — разбор и чанкование тест-кейсов Allure TestOps для индексации.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
 import os
 import re
@@ -12,36 +11,11 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import tiktoken
 
-from qdrant_mcp.allure_client import AllureTestOpsClient
-from qdrant_mcp.allure_qdrant_store import (
-    delete_project_test_cases,
-    delete_test_cases,
-    ensure_collection_exists,
-    upsert_test_case_chunks,
-)
-from qdrant_mcp.embedder import embed_texts
-
 logger = logging.getLogger(__name__)
 
 CHUNK_MAX_TOKENS = int(os.environ.get("CHUNK_MAX_TOKENS", "500"))
 CHUNK_OVERLAP_TOKENS = int(os.environ.get("CHUNK_OVERLAP_TOKENS", "50"))
 ATTACHMENT_MAX_CHARS = int(os.environ.get("ALLURE_ATTACHMENT_MAX_CHARS", "12000"))
-
-
-@dataclass
-class IndexingStats:
-    """Накопительная статистика индексации."""
-
-    test_cases_indexed: int = 0
-    chunks_total: int = 0
-    errors: int = 0
-
-    def as_dict(self) -> Dict[str, int]:
-        return {
-            "test_cases_indexed": self.test_cases_indexed,
-            "chunks_total": self.chunks_total,
-            "errors": self.errors,
-        }
 
 
 def _get_tokenizer():
@@ -409,97 +383,3 @@ def _build_chunks(
     }
 
     return {"chunks": sections, "metadata": metadata, "name": name}
-
-
-def index_one_test_case(
-    client: AllureTestOpsClient,
-    test_case_id: int,
-    project_id: int,
-    full_payload: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Индексирует один тест-кейс, заменяя его предыдущую версию в Qdrant."""
-    payload = full_payload or client.get_complete_test_case(test_case_id)
-    normalized = _build_chunks(test_case_id, payload, project_id)
-    chunks = normalized["chunks"]
-    if not chunks:
-        return {"test_case_id": str(test_case_id), "chunks_total": 0, "name": normalized["name"]}
-
-    content_vectors = embed_texts([chunk["text"] for chunk in chunks])
-    title_vectors = embed_texts([normalized["name"]] * len(chunks))
-    inserted = upsert_test_case_chunks(
-        test_case_id=str(test_case_id),
-        chunks=chunks,
-        content_vectors=content_vectors,
-        title_vectors=title_vectors,
-        metadata=normalized["metadata"],
-    )
-    return {"test_case_id": str(test_case_id), "chunks_total": inserted, "name": normalized["name"]}
-
-
-def run_index(
-    *,
-    project_id: Optional[int] = None,
-    rql: Optional[str] = None,
-    page_size: int = 100,
-    max_test_cases: Optional[int] = None,
-    reindex: bool = False,
-) -> Dict[str, Any]:
-    """
-    Индексирует тест-кейсы Allure TestOps.
-    """
-    stats = IndexingStats()
-    ensure_collection_exists()
-
-    with AllureTestOpsClient() as client:
-        resolved_project_id = project_id or client.default_project_id
-        if resolved_project_id is None:
-            raise ValueError(
-                "project_id не передан и ALLURE_TESTOPS_PROJECT_ID не задан"
-            )
-
-        summaries = client.list_test_cases(
-            project_id=resolved_project_id,
-            rql=rql,
-            page_size=page_size,
-            max_test_cases=max_test_cases,
-        )
-        test_case_ids = [
-            str(test_case_id)
-            for summary in summaries
-            if (test_case_id := _extract_test_case_id(summary)) is not None
-        ]
-
-        if reindex:
-            if rql:
-                delete_test_cases(test_case_ids)
-            else:
-                delete_project_test_cases(str(resolved_project_id))
-
-        for summary in summaries:
-            test_case_id = _extract_test_case_id(summary)
-            if test_case_id is None:
-                logger.warning("Пропуск test case без id: %s", summary)
-                stats.errors += 1
-                continue
-
-            try:
-                result = index_one_test_case(client, test_case_id, resolved_project_id)
-                if not result["chunks_total"]:
-                    logger.warning("Тест-кейс %s не содержит индексируемого контента", test_case_id)
-                    continue
-                stats.test_cases_indexed += 1
-                stats.chunks_total += result["chunks_total"]
-            except Exception as exc:
-                logger.error("Ошибка индексации test_case=%s: %s", test_case_id, exc, exc_info=True)
-                stats.errors += 1
-
-    result = stats.as_dict()
-    result.update(
-        {
-            "project_id": resolved_project_id,
-            "rql": rql,
-            "reindex": reindex,
-            "fetched_test_cases": len(summaries),
-        }
-    )
-    return result
