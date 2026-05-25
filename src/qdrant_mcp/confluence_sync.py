@@ -5,7 +5,7 @@ import hashlib
 from typing import Any
 
 from qdrant_mcp.embedder import embed_texts
-from qdrant_mcp.indexer import (
+from qdrant_mcp.confluence_utils import (
     _chunk_text,
     _fetch_child_pages,
     _fetch_page,

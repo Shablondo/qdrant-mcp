@@ -7,6 +7,7 @@ test case -> scenario -> attachments -> tags.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -141,7 +142,7 @@ class AllureTestOpsClient:
 
         try:
             return response.json()
-        except Exception as exc:
+        except json.JSONDecodeError as exc:
             raise AllureTestOpsError(
                 f"Не удалось декодировать JSON для {endpoint}: {exc}"
             ) from exc
