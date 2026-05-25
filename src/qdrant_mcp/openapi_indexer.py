@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from qdrant_mcp.embedder import embed_single
+from qdrant_mcp.embedder import embed_texts
 from qdrant_mcp.openapi_curl import build_curl_template
 from qdrant_mcp.openapi_fetcher import fetch_openapi_spec
 from qdrant_mcp.openapi_parser import normalize_openapi_operations
@@ -62,6 +62,8 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
     updated = 0
     skipped = 0
     seen_keys: set[str] = set()
+    changed_ops: list[dict[str, Any]] = []
+
     for operation in operations:
         operation_key = str(operation["operation_key"])
         seen_keys.add(operation_key)
@@ -70,28 +72,50 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
         if not reindex and previous and previous.get("content_hash") == operation["operation_hash"]:
             skipped += 1
             continue
-        upsert_operation(
-            operation,
-            content_vector=embed_single(operation.get("text") or operation_title(operation)),
-            title_vector=embed_single(operation_title(operation)),
+        changed_ops.append(
+            {
+                "operation": operation,
+                "operation_key": operation_key,
+                "state_id": state_id,
+                "spec_hash": fetched.spec_hash,
+                "service": source.service,
+                "method": operation["method"],
+                "path": operation["path"],
+            }
         )
-        save_sync_state(
-            SyncState(
-                kind="openapi_operation",
-                source_id=state_id,
-                content_hash=operation["operation_hash"],
-                version=fetched.spec_hash,
-                metadata={
-                    "root_source_id": source.id,
-                    "operation_key": operation_key,
-                    "service": source.service,
-                    "method": operation["method"],
-                    "path": operation["path"],
-                    "spec_hash": fetched.spec_hash,
-                },
+
+    if changed_ops:
+        all_content_texts = [
+            op["operation"].get("text") or operation_title(op["operation"])
+            for op in changed_ops
+        ]
+        all_title_texts = [operation_title(op["operation"]) for op in changed_ops]
+        all_content_vectors = embed_texts(all_content_texts)
+        all_title_vectors = embed_texts(all_title_texts)
+
+        for i, op in enumerate(changed_ops):
+            upsert_operation(
+                op["operation"],
+                content_vector=all_content_vectors[i],
+                title_vector=all_title_vectors[i],
             )
-        )
-        updated += 1
+            save_sync_state(
+                SyncState(
+                    kind="openapi_operation",
+                    source_id=op["state_id"],
+                    content_hash=op["operation"]["operation_hash"],
+                    version=op["spec_hash"],
+                    metadata={
+                        "root_source_id": source.id,
+                        "operation_key": op["operation_key"],
+                        "service": op["service"],
+                        "method": op["method"],
+                        "path": op["path"],
+                        "spec_hash": op["spec_hash"],
+                    },
+                )
+            )
+            updated += 1
 
     deleted = 0
     for state in list_sync_states("openapi_operation", f"{source.id}:"):
