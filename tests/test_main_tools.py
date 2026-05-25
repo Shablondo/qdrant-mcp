@@ -1,16 +1,17 @@
 import json
 from copy import deepcopy
 
-import qdrant_mcp.main as main
 from qdrant_mcp.main import mcp
+import qdrant_mcp.openapi_tools as openapi_tools
+import qdrant_mcp.sync_tools as sync_tools
 
 
 def _get_tool(name):
-    return mcp._local_provider._components[f"tool:{name}@"]
+    return mcp._tool_manager._tools[name]
 
 
 def _get_tool_names():
-    return {key.split(":")[1].rstrip("@") for key in mcp._local_provider._components if key.startswith("tool:")}
+    return set(mcp._tool_manager._tools.keys())
 
 
 def _create_sku_operation() -> dict:
@@ -32,14 +33,26 @@ def test_registers_explicit_rag_tool_names() -> None:
     tools = _get_tool_names()
 
     expected = {
-        "rag_confluence_index_page_tree",
         "rag_confluence_search",
+        "rag_confluence_search_hybrid",
+        "rag_confluence_find_similar_pages",
+        "rag_confluence_search_by_examples",
+        "rag_confluence_get_indexed_page",
+        "rag_confluence_list_indexed_pages",
+        "rag_confluence_get_collection_info",
         "rag_allure_search_test_cases",
+        "rag_allure_get_indexed_test_case",
+        "rag_allure_list_indexed_test_cases",
+        "rag_allure_get_collection_info",
         "rag_openapi_search_operations",
         "rag_openapi_get_operation",
         "rag_openapi_build_attachment",
         "rag_openapi_build_curl_template",
         "rag_openapi_find_curl",
+        "rag_openapi_index_sources",
+        "rag_openapi_reindex_sources",
+        "rag_openapi_list_indexed_operations",
+        "rag_openapi_get_collection_info",
         "rag_sync_sources",
         "rag_list_sources",
         "rag_get_sync_status",
@@ -52,21 +65,10 @@ def test_registers_explicit_rag_tool_names() -> None:
 def test_does_not_register_legacy_tool_names() -> None:
     tools = _get_tool_names()
     legacy_tools = {
-        "index_page_tree",
-        "reindex_page_tree",
-        "search",
-        "get_indexed_page",
-        "list_indexed",
-        "get_collection_info",
-        "find_similar_pages",
-        "search_by_examples",
-        "search_hybrid_tool",
-        "index_allure_test_cases",
-        "reindex_allure_test_cases",
-        "search_allure_test_cases",
-        "get_indexed_allure_test_case",
-        "list_indexed_allure_test_cases",
-        "get_allure_collection_info",
+        "rag_confluence_index_page_tree",
+        "rag_confluence_reindex_page_tree",
+        "rag_allure_index_test_cases",
+        "rag_allure_reindex_test_cases",
     }
 
     assert tools.isdisjoint(legacy_tools)
@@ -95,7 +97,7 @@ def test_sync_sources_parses_kilocode_stringified_arrays(monkeypatch) -> None:
     calls = {}
 
     monkeypatch.setattr(
-        main,
+        sync_tools,
         "sync_sources",
         lambda **kwargs: calls.update(kwargs) or {"totals": {}, "results": {}},
     )
@@ -119,7 +121,7 @@ def test_get_sync_status_tool_normalizes_blank_filters_and_passes_limit(monkeypa
     calls = {}
 
     monkeypatch.setattr(
-        main,
+        sync_tools,
         "get_sync_status",
         lambda **kwargs: calls.update(kwargs) or {"states": [], "states_count": 0},
     )
@@ -138,8 +140,8 @@ def test_openapi_search_infers_http_method_from_action_query(monkeypatch) -> Non
         calls.update(kwargs)
         return [{"service": "fulfillment-catalog", "method": "POST"}]
 
-    monkeypatch.setattr(main, "embed_single", lambda query: [0.1, 0.2, 0.3])
-    monkeypatch.setattr(main, "search_openapi_operations_qdrant", fake_search)
+    monkeypatch.setattr(openapi_tools, "embed_single", lambda query: [0.1, 0.2, 0.3])
+    monkeypatch.setattr(openapi_tools, "search_openapi_operations_qdrant", fake_search)
 
     tool_fn = _get_tool("rag_openapi_search_operations").fn
     response = json.loads(
@@ -167,15 +169,15 @@ def test_openapi_find_curl_returns_single_curl_without_full_payload(monkeypatch)
     }
     full_operation = _create_sku_operation()
 
-    monkeypatch.setattr(main, "embed_single", lambda query: [0.1, 0.2, 0.3])
-    monkeypatch.setattr(main, "search_openapi_operations_qdrant", lambda **kwargs: [deepcopy(compact_candidate)])
+    monkeypatch.setattr(openapi_tools, "embed_single", lambda query: [0.1, 0.2, 0.3])
+    monkeypatch.setattr(openapi_tools, "search_openapi_operations_qdrant", lambda **kwargs: [deepcopy(compact_candidate)])
     monkeypatch.setattr(
-        main,
+        openapi_tools,
         "get_openapi_operation_from_store",
         lambda service, method, path: deepcopy(full_operation),
     )
     monkeypatch.setattr(
-        main,
+        openapi_tools,
         "build_curl_template",
         lambda operation: "curl --location 'https://fulfillment-catalog-pp-test.k8s.5post-stage-5.salt.x5.ru/api/v1/sku'",
     )
