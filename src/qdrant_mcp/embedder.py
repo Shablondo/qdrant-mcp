@@ -81,6 +81,12 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
         )
 
         response = client.embeddings.create(model=EMBED_MODEL, input=batch)
+        logger.info(
+            "embedding response: type=%s, data_type=%s, raw[:1000]=%s",
+            type(response).__name__,
+            type(getattr(response, "data", None)).__name__,
+            str(response)[:1000],
+        )
         sorted_data = sorted(response.data, key=lambda item: item.index)
         batch_embeddings = [item.embedding for item in sorted_data]
 
