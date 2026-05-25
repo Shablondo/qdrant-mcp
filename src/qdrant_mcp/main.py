@@ -1016,6 +1016,10 @@ def rag_get_source_sync_status(sources_path: Optional[str] = None) -> str:
     )
 
 
-if __name__ == "__main__":
+def main():
+    """Entry point for qdrant-mcp MCP server (used by uvx and console_scripts)."""
     logger.info("Запуск qdrant-mcp сервера...")
     mcp.run(transport="stdio")
+
+if __name__ == "__main__":
+    main()
