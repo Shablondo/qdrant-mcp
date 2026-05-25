@@ -1,17 +1,18 @@
 """
 embedder.py — клиент к OpenAI-compatible Embeddings API.
-Модель: copilot-embed-4b, размерность: 2560
+Модель по умолчанию: text-embedding-3-large, размерность: 3072
 
-Основная переменная для ключа: COPILOT_API_KEY.
+Основная переменная для ключа: OPENAI_API_KEY.
+Для обратной совместимости также поддерживается COPILOT_API_KEY.
 
 Конфигурация через переменные окружения:
 
-  Вариант 1 — полный URL до endpoint (рекомендуется):
-    EMBED_API_ENDPOINT=https://api-copilot.x5.ru/aigw/v1/embeddings
+  Вариант 1 — полный URL до endpoint:
+    EMBED_API_ENDPOINT=https://api.openai.com/v1/embeddings
     В этом случае EMBED_API_BASE игнорируется.
 
   Вариант 2 — базовый URL (openai SDK добавит /embeddings автоматически):
-    EMBED_API_BASE=https://api-copilot.x5.ru/aigw/v1
+    EMBED_API_BASE=https://api.openai.com/v1
 """
 
 import logging
@@ -24,10 +25,10 @@ from openai import OpenAI
 logger = logging.getLogger(__name__)
 
 EMBED_API_ENDPOINT = os.environ.get("EMBED_API_ENDPOINT", "")
-EMBED_API_BASE = os.environ.get("EMBED_API_BASE", "")
-COPILOT_API_KEY = os.environ.get("COPILOT_API_KEY", "")
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "copilot-embed-4b")
-EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "2560"))
+EMBED_API_BASE = os.environ.get("EMBED_API_BASE", "https://api.openai.com/v1")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "") or os.environ.get("COPILOT_API_KEY", "")
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-3-large")
+EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
 EMBED_BATCH_SIZE = 32
 
 
@@ -45,17 +46,17 @@ def _resolve_base_url() -> str:
 
     raise ValueError(
         "Не задан ни EMBED_API_ENDPOINT, ни EMBED_API_BASE в переменных окружения. "
-        "Пример: EMBED_API_ENDPOINT=https://api-copilot.x5.ru/aigw/v1/embeddings"
+        "Пример: EMBED_API_ENDPOINT=https://api.openai.com/v1/embeddings"
     )
 
 
 def _get_client() -> OpenAI:
-    """Создаёт OpenAI клиент с корпоративным endpoint."""
-    if not COPILOT_API_KEY:
-        raise ValueError("COPILOT_API_KEY не задан в переменных окружения")
+    """Создаёт OpenAI клиент для embeddings API."""
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY не задан в переменных окружения")
 
     return OpenAI(
-        api_key=COPILOT_API_KEY,
+        api_key=OPENAI_API_KEY,
         base_url=_resolve_base_url(),
         http_client=httpx.Client(verify=False),
     )
