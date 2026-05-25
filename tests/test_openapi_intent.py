@@ -1,4 +1,4 @@
-from openapi_intent import infer_http_method_from_query
+from qdrant_mcp.openapi_intent import infer_http_method_from_query
 
 
 def test_infers_post_for_add_barcode_query() -> None:

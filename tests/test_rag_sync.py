@@ -1,10 +1,10 @@
 import threading
 
-import rag_sync
+import qdrant_mcp.rag_sync as rag_sync
 from types import SimpleNamespace
 
-from rag_sources import RagSources
-from rag_sync import get_source_sync_status, get_sync_status, sync_sources
+from qdrant_mcp.rag_sources import RagSources
+from qdrant_mcp.rag_sync import get_source_sync_status, get_sync_status, sync_sources
 
 
 def test_sync_sources_dispatches_selected_kinds(monkeypatch) -> None:
@@ -15,21 +15,21 @@ def test_sync_sources_dispatches_selected_kinds(monkeypatch) -> None:
     )
     calls = []
 
-    monkeypatch.setattr("rag_sync.load_registry", lambda sources_path=None: registry)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.load_registry", lambda sources_path=None: registry)
     monkeypatch.setattr(
-        "rag_sync.sync_confluence_source",
+        "qdrant_mcp.rag_sync.sync_confluence_source",
         lambda source, stale_after_minutes=None: calls.append(("confluence", source.id)) or {"updated": 1},
     )
     monkeypatch.setattr(
-        "rag_sync.sync_allure_source",
+        "qdrant_mcp.rag_sync.sync_allure_source",
         lambda source, stale_after_minutes=None: calls.append(("allure", source.id)) or {"updated": 1},
     )
     monkeypatch.setattr(
-        "rag_sync.index_openapi_source",
+        "qdrant_mcp.rag_sync.index_openapi_source",
         lambda source, reindex=False: calls.append(("openapi", source.id)) or {"updated": 1},
     )
-    monkeypatch.setattr("rag_sync.get_sync_state", lambda kind, source_id: None)
-    monkeypatch.setattr("rag_sync.save_sync_state", lambda state: None)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.get_sync_state", lambda kind, source_id: None)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.save_sync_state", lambda state: None)
 
     result = sync_sources(kinds=["confluence", "openapi"], force=True)
 
@@ -61,11 +61,11 @@ def test_sync_sources_runs_independent_sources_in_parallel(monkeypatch) -> None:
         return {"updated": 1}
 
     monkeypatch.setenv("RAG_SYNC_MAX_WORKERS", "2")
-    monkeypatch.setattr("rag_sync.load_registry", lambda sources_path=None: registry)
-    monkeypatch.setattr("rag_sync.sync_confluence_source", sync_confluence)
-    monkeypatch.setattr("rag_sync.index_openapi_source", sync_openapi)
-    monkeypatch.setattr("rag_sync.get_sync_state", lambda kind, source_id: None)
-    monkeypatch.setattr("rag_sync.save_sync_state", lambda state: None)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.load_registry", lambda sources_path=None: registry)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.sync_confluence_source", sync_confluence)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.index_openapi_source", sync_openapi)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.get_sync_state", lambda kind, source_id: None)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.save_sync_state", lambda state: None)
 
     result = sync_sources(kinds=["confluence", "openapi"], force=True)
 
@@ -84,11 +84,11 @@ def test_sync_sources_skips_locked_source_without_running_sync(monkeypatch) -> N
     lock = threading.Lock()
     lock.acquire()
     monkeypatch.setitem(rag_sync._SOURCE_LOCKS, "confluence:docs", lock)
-    monkeypatch.setattr("rag_sync.load_registry", lambda sources_path=None: registry)
-    monkeypatch.setattr("rag_sync.get_sync_state", lambda kind, source_id: None)
-    monkeypatch.setattr("rag_sync.save_sync_state", lambda state: None)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.load_registry", lambda sources_path=None: registry)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.get_sync_state", lambda kind, source_id: None)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.save_sync_state", lambda state: None)
     monkeypatch.setattr(
-        "rag_sync.sync_confluence_source",
+        "qdrant_mcp.rag_sync.sync_confluence_source",
         lambda source, stale_after_minutes=None: (_ for _ in ()).throw(AssertionError("locked source should not sync")),
     )
 
@@ -108,10 +108,10 @@ def test_sync_sources_skips_source_until_interval_expires(monkeypatch) -> None:
     calls = []
     saved_states = []
 
-    monkeypatch.setattr("rag_sync.load_registry", lambda sources_path=None: registry)
-    monkeypatch.setattr("rag_sync._utc_now", lambda: "2026-04-28T11:00:00+00:00")
+    monkeypatch.setattr("qdrant_mcp.rag_sync.load_registry", lambda sources_path=None: registry)
+    monkeypatch.setattr("qdrant_mcp.rag_sync._utc_now", lambda: "2026-04-28T11:00:00+00:00")
     monkeypatch.setattr(
-        "rag_sync.get_sync_state",
+        "qdrant_mcp.rag_sync.get_sync_state",
         lambda kind, source_id: {
             "kind": "rag_source",
             "source_id": "docs",
@@ -119,9 +119,9 @@ def test_sync_sources_skips_source_until_interval_expires(monkeypatch) -> None:
             "next_due_at": "2026-04-28T11:30:00+00:00",
         },
     )
-    monkeypatch.setattr("rag_sync.save_sync_state", lambda state: saved_states.append(state))
+    monkeypatch.setattr("qdrant_mcp.rag_sync.save_sync_state", lambda state: saved_states.append(state))
     monkeypatch.setattr(
-        "rag_sync.sync_confluence_source",
+        "qdrant_mcp.rag_sync.sync_confluence_source",
         lambda source, stale_after_minutes=None: calls.append(source.id) or {"updated": 1},
     )
 
@@ -144,18 +144,18 @@ def test_source_interval_takes_precedence_over_global_stale_after(monkeypatch) -
     calls = []
     saved_states = []
 
-    monkeypatch.setattr("rag_sync.load_registry", lambda sources_path=None: registry)
-    monkeypatch.setattr("rag_sync._utc_now", lambda: "2026-04-28T11:00:00+00:00")
+    monkeypatch.setattr("qdrant_mcp.rag_sync.load_registry", lambda sources_path=None: registry)
+    monkeypatch.setattr("qdrant_mcp.rag_sync._utc_now", lambda: "2026-04-28T11:00:00+00:00")
     monkeypatch.setattr(
-        "rag_sync.get_sync_state",
+        "qdrant_mcp.rag_sync.get_sync_state",
         lambda kind, source_id: {
             "last_synced_at": "2026-04-28T10:30:00+00:00",
             "next_due_at": "2026-04-28T12:30:00+00:00",
         },
     )
-    monkeypatch.setattr("rag_sync.save_sync_state", lambda state: saved_states.append(state))
+    monkeypatch.setattr("qdrant_mcp.rag_sync.save_sync_state", lambda state: saved_states.append(state))
     monkeypatch.setattr(
-        "rag_sync.sync_allure_source",
+        "qdrant_mcp.rag_sync.sync_allure_source",
         lambda source, stale_after_minutes=None: calls.append(source.id) or {"updated": 1},
     )
 
@@ -176,18 +176,18 @@ def test_sync_sources_runs_due_source_and_saves_source_status(monkeypatch) -> No
     calls = []
     saved_states = []
 
-    monkeypatch.setattr("rag_sync.load_registry", lambda sources_path=None: registry)
-    monkeypatch.setattr("rag_sync._utc_now", lambda: "2026-04-28T11:00:00+00:00")
+    monkeypatch.setattr("qdrant_mcp.rag_sync.load_registry", lambda sources_path=None: registry)
+    monkeypatch.setattr("qdrant_mcp.rag_sync._utc_now", lambda: "2026-04-28T11:00:00+00:00")
     monkeypatch.setattr(
-        "rag_sync.get_sync_state",
+        "qdrant_mcp.rag_sync.get_sync_state",
         lambda kind, source_id: {
             "last_synced_at": "2026-04-28T10:20:00+00:00",
             "next_due_at": "2026-04-28T10:50:00+00:00",
         },
     )
-    monkeypatch.setattr("rag_sync.save_sync_state", lambda state: saved_states.append(state))
+    monkeypatch.setattr("qdrant_mcp.rag_sync.save_sync_state", lambda state: saved_states.append(state))
     monkeypatch.setattr(
-        "rag_sync.index_openapi_source",
+        "qdrant_mcp.rag_sync.index_openapi_source",
         lambda source, reindex=False: calls.append(source.id) or {"updated": 2, "skipped": 3, "deleted": 1, "errors": 0},
     )
 
@@ -211,10 +211,10 @@ def test_get_source_sync_status_reports_due_state(monkeypatch) -> None:
         openapi=[],
     )
 
-    monkeypatch.setattr("rag_sync.load_registry", lambda sources_path=None: registry)
-    monkeypatch.setattr("rag_sync._utc_now", lambda: "2026-04-28T13:00:00+00:00")
+    monkeypatch.setattr("qdrant_mcp.rag_sync.load_registry", lambda sources_path=None: registry)
+    monkeypatch.setattr("qdrant_mcp.rag_sync._utc_now", lambda: "2026-04-28T13:00:00+00:00")
     monkeypatch.setattr(
-        "rag_sync.list_sync_states",
+        "qdrant_mcp.rag_sync.list_sync_states",
         lambda kind=None, source_id_prefix=None: [
             {
                 "kind": "rag_source",
@@ -240,7 +240,7 @@ def test_get_sync_status_requires_filter_for_blank_values(monkeypatch) -> None:
     def fail_if_called(*args, **kwargs):
         raise AssertionError("list_sync_states should not be called without filters")
 
-    monkeypatch.setattr("rag_sync.list_sync_states", fail_if_called)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.list_sync_states", fail_if_called)
 
     status = get_sync_status(kind="", source_id_prefix="")
 
@@ -260,7 +260,7 @@ def test_get_sync_status_limits_filtered_results(monkeypatch) -> None:
             for index in range(3)
         ]
 
-    monkeypatch.setattr("rag_sync.list_sync_states", fake_list_sync_states)
+    monkeypatch.setattr("qdrant_mcp.rag_sync.list_sync_states", fake_list_sync_states)
 
     status = get_sync_status(kind=" openapi_operation ", source_id_prefix=" shipment: ", limit=2)
 

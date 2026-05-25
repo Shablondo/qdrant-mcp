@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from rag_sync import get_source_sync_status, get_sync_status, list_sources, sync_sources
+from qdrant_mcp.rag_sync import get_source_sync_status, get_sync_status, list_sources, sync_sources
 
 
 def main() -> None:

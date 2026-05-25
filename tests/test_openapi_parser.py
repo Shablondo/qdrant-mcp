@@ -1,4 +1,4 @@
-from openapi_parser import normalize_openapi_operations
+from qdrant_mcp.openapi_parser import normalize_openapi_operations
 
 
 def test_normalizes_operations_with_stage5_runtime_url() -> None:

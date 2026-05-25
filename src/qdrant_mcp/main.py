@@ -13,26 +13,26 @@ from typing import List, Optional
 
 from fastmcp import FastMCP
 
-from allure_indexer import run_index as run_allure_index
-from allure_qdrant_store import (
+from qdrant_mcp.allure_indexer import run_index as run_allure_index
+from qdrant_mcp.allure_qdrant_store import (
     ensure_collection_exists as ensure_allure_collection_exists,
     get_collection_stats as get_allure_collection_stats,
     get_test_case_chunks,
     list_indexed_test_cases,
     search as search_allure_test_cases_qdrant,
 )
-from embedder import embed_single
-from indexer import run_index as run_confluence_index
-from openapi_curl import build_curl_template
-from openapi_indexer import build_openapi_attachment, index_openapi_source
-from openapi_intent import infer_http_methods_from_query
-from openapi_qdrant_store import (
+from qdrant_mcp.embedder import embed_single
+from qdrant_mcp.indexer import run_index as run_confluence_index
+from qdrant_mcp.openapi_curl import build_curl_template
+from qdrant_mcp.openapi_indexer import build_openapi_attachment, index_openapi_source
+from qdrant_mcp.openapi_intent import infer_http_methods_from_query
+from qdrant_mcp.openapi_qdrant_store import (
     get_collection_stats as get_openapi_collection_stats,
     get_operation as get_openapi_operation_from_store,
     list_indexed_operations,
     search_operations as search_openapi_operations_qdrant,
 )
-from qdrant_store import (
+from qdrant_mcp.qdrant_store import (
     delete_page_tree,
     discover_by_examples,
     ensure_collection_exists,
@@ -43,8 +43,8 @@ from qdrant_store import (
     search as qdrant_search,
     search_hybrid,
 )
-from rag_sync import get_source_sync_status, get_sync_status, list_sources, load_registry, sync_sources
-from tool_utils import clamp_limit, normalize_search_vector, normalize_string_list, run_tool
+from qdrant_mcp.rag_sync import get_source_sync_status, get_sync_status, list_sources, load_registry, sync_sources
+from qdrant_mcp.tool_utils import clamp_limit, normalize_search_vector, normalize_string_list, run_tool
 
 # Настройка логирования
 logging.basicConfig(
@@ -1016,6 +1016,10 @@ def rag_get_source_sync_status(sources_path: Optional[str] = None) -> str:
     )
 
 
-if __name__ == "__main__":
+def main():
+    """Entry point for qdrant-mcp MCP server (used by uvx and console_scripts)."""
     logger.info("Запуск qdrant-mcp сервера...")
     mcp.run(transport="stdio")
+
+if __name__ == "__main__":
+    main()

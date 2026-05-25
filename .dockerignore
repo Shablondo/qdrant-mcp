@@ -21,3 +21,6 @@ htmlcov/
 README.md
 plans/
 .kilocode/
+
+# uv
+uv.lock

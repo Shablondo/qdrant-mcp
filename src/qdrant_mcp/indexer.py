@@ -21,8 +21,8 @@ import tiktoken
 from bs4 import BeautifulSoup
 import html2text
 
-from embedder import embed_single, embed_texts
-from qdrant_store import upsert_page_chunks, ensure_collection_exists
+from qdrant_mcp.embedder import embed_single, embed_texts
+from qdrant_mcp.qdrant_store import upsert_page_chunks, ensure_collection_exists
 
 logger = logging.getLogger(__name__)
 
