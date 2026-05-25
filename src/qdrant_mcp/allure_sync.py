@@ -136,12 +136,19 @@ def sync_allure_source(source: Any, stale_after_minutes: int | None = None) -> d
             case_results = [future.result() for future in futures]
 
     changed_cases = [r for r in case_results if r.get("status") == "changed"]
+    error_details: list[dict[str, str]] = []
     for r in case_results:
         status = r.get("status")
         if status == "skipped":
             stats.skipped += 1
         elif status == "error":
             stats.errors += 1
+            error_details.append(
+                {
+                    "test_case_id": str(r.get("test_case_id", "")),
+                    "message": str(r.get("message", "unknown error")),
+                }
+            )
 
     if changed_cases:
         all_chunk_texts: list[str] = []
@@ -203,4 +210,5 @@ def sync_allure_source(source: Any, stale_after_minutes: int | None = None) -> d
         "skipped": stats.skipped,
         "deleted": stats.deleted,
         "errors": stats.errors,
+        "error_details": error_details,
     }

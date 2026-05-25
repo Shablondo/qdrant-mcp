@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import os
 import logging
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 import httpx
 import tiktoken
@@ -192,14 +192,14 @@ def _chunk_text(text: str, page_title: str = "") -> List[str]:
     return chunks
 
 
-def _fetch_page(client: httpx.Client, page_id: str) -> Optional[Dict[str, Any]]:
+def _fetch_page(client: httpx.Client, page_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """
     Получает страницу Confluence по ID.
 
     Returns:
-        Словарь с полями: id, title, body_html, url, space_key,
-        last_modified, version
-        или None если страница недоступна.
+        (page_dict, None) при успехе, где page_dict содержит:
+          id, title, body_html, url, space_key, last_modified, version
+        (None, error_message) при ошибке.
     """
     url = f"{CONFLUENCE_URL}/rest/api/content/{page_id}"
     params = {
@@ -212,11 +212,13 @@ def _fetch_page(client: httpx.Client, page_id: str) -> Optional[Dict[str, Any]]:
         response.raise_for_status()
         data = response.json()
     except httpx.HTTPStatusError as e:
+        message = f"HTTP {e.response.status_code}"
         logger.warning(f"HTTP ошибка при получении страницы {page_id}: {e.response.status_code}")
-        return None
+        return None, message
     except Exception as e:
+        message = str(e) or type(e).__name__
         logger.error(f"Ошибка при получении страницы {page_id}: {e}")
-        return None
+        return None, message
 
     body_html = ""
     try:
@@ -257,7 +259,7 @@ def _fetch_page(client: httpx.Client, page_id: str) -> Optional[Dict[str, Any]]:
         "space_key": space_key,
         "last_modified": last_modified,
         "version": version,
-    }
+    }, None
 
 
 def _fetch_child_pages(client: httpx.Client, page_id: str) -> List[str]:
@@ -343,7 +345,7 @@ def index_page_recursive(
     logger.info(f"{indent}Индексация страницы {page_id} (глубина {depth})")
 
     # Получаем страницу
-    page = _fetch_page(client, page_id)
+    page, _fetch_error = _fetch_page(client, page_id)
     if not page:
         logger.warning(f"{indent}Не удалось получить страницу {page_id}, пропускаем")
         stats.errors += 1
