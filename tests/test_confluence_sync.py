@@ -64,20 +64,22 @@ def test_sync_confluence_source_walks_root_and_nested_children(monkeypatch) -> N
             return None
 
     monkeypatch.setattr("qdrant_mcp.confluence_sync._get_http_client", lambda: DummyClient())
-    monkeypatch.setattr("qdrant_mcp.confluence_sync._fetch_page", lambda client, page_id: pages[page_id])
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._fetch_page", lambda client, page_id: (pages[page_id], None))
     monkeypatch.setattr("qdrant_mcp.confluence_sync._fetch_child_pages", lambda client, page_id: children[page_id])
     monkeypatch.setattr("qdrant_mcp.confluence_sync._html_to_text", lambda html: html)
     monkeypatch.setattr("qdrant_mcp.confluence_sync._chunk_text", lambda text, title: [f"{title}: {text}"])
     monkeypatch.setattr("qdrant_mcp.confluence_sync.embed_texts", lambda texts: [[0.1, 0.2] for _ in texts])
-    monkeypatch.setattr("qdrant_mcp.confluence_sync._build_title_vectors", lambda title, count: [[0.3, 0.4] for _ in range(count)])
-    monkeypatch.setattr("qdrant_mcp.confluence_sync.get_sync_state", lambda kind, source_id: None)
-    monkeypatch.setattr("qdrant_mcp.confluence_sync.save_sync_state", lambda state: saved_states.append(state))
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.load_sync_states_dict", lambda kind, prefix: {})
+    monkeypatch.setattr(
+        "qdrant_mcp.confluence_sync.save_sync_states_batch",
+        lambda states: saved_states.extend(states),
+    )
     monkeypatch.setattr("qdrant_mcp.confluence_sync.delete_sync_state", lambda kind, source_id: None)
     monkeypatch.setattr("qdrant_mcp.confluence_sync.list_sync_states", lambda kind, source_id_prefix: [])
     monkeypatch.setattr("qdrant_mcp.confluence_sync.delete_page", lambda page_id: None)
     monkeypatch.setattr(
-        "qdrant_mcp.confluence_sync.upsert_page_chunks",
-        lambda **kwargs: indexed.append(kwargs) or len(kwargs["chunks"]),
+        "qdrant_mcp.confluence_sync.upsert_page_chunks_batch",
+        lambda pages: [indexed.append({"page_id": p["page_id"], "metadata": p["metadata"]}) for p in pages],
     )
 
     result = sync_confluence_source(SimpleNamespace(id="docs", root_page_id="1"))

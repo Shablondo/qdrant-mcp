@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from qdrant_client import QdrantClient
+from qdrant_mcp.qdrant_utils import get_qdrant_client
 from qdrant_client.models import (
     Distance,
     FieldCondition,
@@ -27,17 +28,13 @@ EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
 _ENSURE_COLLECTION_LOCK = threading.Lock()
 
 
-def _client() -> QdrantClient:
-    return QdrantClient(url=QDRANT_URL)
-
-
 def _is_collection_exists_error(exc: Exception) -> bool:
     message = str(exc).lower()
     return "already exists" in message and OPENAPI_QDRANT_COLLECTION.lower() in message
 
 
 def ensure_collection_exists() -> None:
-    client = _client()
+    client = get_qdrant_client()
     with _ENSURE_COLLECTION_LOCK:
         existing = [collection.name for collection in client.get_collections().collections]
         if OPENAPI_QDRANT_COLLECTION in existing:
@@ -86,24 +83,34 @@ def operation_title(operation: dict[str, Any]) -> str:
     )
 
 
-def upsert_operation(
-    operation: dict[str, Any],
+
+def upsert_operations_batch(
+    operations: list[dict[str, Any]],
     *,
-    content_vector: list[float],
-    title_vector: list[float],
+    content_vectors: list[list[float]],
+    title_vectors: list[list[float]],
+    operation_keys: list[str],
 ) -> None:
     ensure_collection_exists()
-    client = _client()
-    delete_operations([str(operation["operation_key"])])
+    client = get_qdrant_client()
+    if operation_keys:
+        client.delete(
+            collection_name=OPENAPI_QDRANT_COLLECTION,
+            points_selector=Filter(
+                must=[FieldCondition(key="operation_key", match=MatchAny(any=operation_keys))]
+            ),
+        )
+    points = [
+        PointStruct(
+            id=str(uuid.uuid4()),
+            vector={"content": content_vectors[i], "title": title_vectors[i]},
+            payload=operations[i],
+        )
+        for i in range(len(operations))
+    ]
     client.upsert(
         collection_name=OPENAPI_QDRANT_COLLECTION,
-        points=[
-            PointStruct(
-                id=str(uuid.uuid4()),
-                vector={"content": content_vector, "title": title_vector},
-                payload=operation,
-            )
-        ],
+        points=points,
     )
 
 
@@ -111,7 +118,7 @@ def delete_operations(operation_keys: list[str]) -> None:
     if not operation_keys:
         return
     ensure_collection_exists()
-    client = _client()
+    client = get_qdrant_client()
     client.delete(
         collection_name=OPENAPI_QDRANT_COLLECTION,
         points_selector=Filter(
@@ -122,7 +129,7 @@ def delete_operations(operation_keys: list[str]) -> None:
 
 def delete_operations_by_source(source_id: str) -> None:
     ensure_collection_exists()
-    client = _client()
+    client = get_qdrant_client()
     client.delete(
         collection_name=OPENAPI_QDRANT_COLLECTION,
         points_selector=Filter(
@@ -302,8 +309,7 @@ def search_operations(
     methods: list[str] | None = None,
     path: str | None = None,
 ) -> list[dict[str, Any]]:
-    ensure_collection_exists()
-    client = _client()
+    client = get_qdrant_client()
     query_filter = _operation_filter(service=service, method=method, methods=methods, path=path)
     points = client.query_points(
         collection_name=OPENAPI_QDRANT_COLLECTION,
@@ -320,8 +326,7 @@ def search_operations(
 
 
 def get_operation(service: str, method: str, path: str) -> dict[str, Any] | None:
-    ensure_collection_exists()
-    client = _client()
+    client = get_qdrant_client()
     points, _ = client.scroll(
         collection_name=OPENAPI_QDRANT_COLLECTION,
         scroll_filter=_operation_filter(service=service, method=method, path=path),
@@ -336,7 +341,7 @@ def get_operation(service: str, method: str, path: str) -> dict[str, Any] | None
 
 def list_indexed_operations(service: str | None = None) -> list[dict[str, Any]]:
     ensure_collection_exists()
-    client = _client()
+    client = get_qdrant_client()
     results: list[dict[str, Any]] = []
     offset = None
     while True:
@@ -357,7 +362,7 @@ def list_indexed_operations(service: str | None = None) -> list[dict[str, Any]]:
 
 def get_collection_stats() -> dict[str, Any]:
     ensure_collection_exists()
-    info = _client().get_collection(collection_name=OPENAPI_QDRANT_COLLECTION)
+    info = get_qdrant_client().get_collection(collection_name=OPENAPI_QDRANT_COLLECTION)
     return {
         "collection": OPENAPI_QDRANT_COLLECTION,
         "points_count": info.points_count,
