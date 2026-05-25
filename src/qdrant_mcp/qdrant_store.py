@@ -286,6 +286,39 @@ def upsert_page_chunks(
     return len(points)
 
 
+def upsert_page_chunks_batch(pages: list[dict[str, Any]]) -> int:
+    client = _get_client()
+    ensure_collection_exists()
+
+    all_points: list[PointStruct] = []
+    for page in pages:
+        _delete_page_points(client, page["page_id"])
+        for index, (chunk_text, content_vec, title_vec) in enumerate(
+            zip(page["chunks"], page["content_vectors"], page["title_vectors"])
+        ):
+            all_points.append(
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector={"content": content_vec, "title": title_vec},
+                    payload={
+                        "page_id": page["page_id"],
+                        "chunk_index": index,
+                        "text": chunk_text,
+                        **page["metadata"],
+                    },
+                )
+            )
+
+    total = 0
+    for start in range(0, len(all_points), UPSERT_BATCH_SIZE):
+        batch = all_points[start : start + UPSERT_BATCH_SIZE]
+        client.upsert(collection_name=QDRANT_COLLECTION, points=batch)
+        total += len(batch)
+
+    logger.info("Batch upsert: %s точек для %s страниц", total, len(pages))
+    return total
+
+
 def _delete_page_points(client: QdrantClient, page_id: str) -> None:
     """Удаляет все points для указанного page_id."""
     client.delete(

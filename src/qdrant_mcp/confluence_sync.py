@@ -12,8 +12,8 @@ from qdrant_mcp.indexer import (
     _get_http_client,
     _html_to_text,
 )
-from qdrant_mcp.qdrant_store import delete_page, upsert_page_chunks
-from qdrant_mcp.sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_state
+from qdrant_mcp.qdrant_store import delete_page, upsert_page_chunks_batch
+from qdrant_mcp.sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_states_batch
 
 
 @dataclass
@@ -103,21 +103,24 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
         all_content_vectors = embed_texts(all_chunk_texts)
         all_title_vectors_raw = embed_texts(all_titles)
 
+        batch_pages: list[dict[str, Any]] = []
         idx = 0
         for i, p in enumerate(pages_to_index):
             n = len(p["chunks"])
-            content_vectors = all_content_vectors[idx : idx + n]
-            idx += n
-            title_vectors = [all_title_vectors_raw[i]] * n
-
-            inserted = upsert_page_chunks(
-                page_id=p["page_id"],
-                chunks=p["chunks"],
-                content_vectors=content_vectors,
-                title_vectors=title_vectors,
-                metadata=p["metadata"],
+            batch_pages.append(
+                {
+                    "page_id": p["page_id"],
+                    "chunks": p["chunks"],
+                    "content_vectors": all_content_vectors[idx : idx + n],
+                    "title_vectors": [all_title_vectors_raw[i]] * n,
+                    "metadata": p["metadata"],
+                }
             )
-            save_sync_state(
+            idx += n
+
+        upsert_page_chunks_batch(batch_pages)
+        save_sync_states_batch(
+            [
                 SyncState(
                     kind="confluence_page",
                     source_id=_state_id(source.id, p["page_id"]),
@@ -128,10 +131,11 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
                         "root_page_id": root_page_id,
                         "page_id": p["page_id"],
                         "title": p["title"],
-                        "chunks_total": inserted,
                     },
                 )
-            )
+                for p in pages_to_index
+            ]
+        )
 
     existing_states = list_sync_states("confluence_page", f"{source.id}:")
     for state in existing_states:

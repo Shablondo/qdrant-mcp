@@ -9,9 +9,15 @@ from typing import Any
 
 from qdrant_mcp.allure_client import AllureTestOpsClient
 from qdrant_mcp.allure_indexer import _build_chunks, _extract_test_case_id
-from qdrant_mcp.allure_qdrant_store import delete_test_cases, upsert_test_case_chunks
+from qdrant_mcp.allure_qdrant_store import delete_test_cases, upsert_test_cases_batch
 from qdrant_mcp.embedder import embed_texts
-from qdrant_mcp.sync_state_store import SyncState, delete_sync_state, get_sync_state, list_sync_states, save_sync_state
+from qdrant_mcp.sync_state_store import (
+    SyncState,
+    delete_sync_state,
+    get_sync_state,
+    list_sync_states,
+    save_sync_states_batch,
+)
 
 
 @dataclass
@@ -144,39 +150,40 @@ def sync_allure_source(source: Any, stale_after_minutes: int | None = None) -> d
         all_content_vectors = embed_texts(all_chunk_texts)
         all_title_vectors_raw = embed_texts(all_names)
 
+        batch_cases: list[dict[str, Any]] = []
         idx = 0
         for i, r in enumerate(changed_cases):
             n = len(r["chunks"])
-            content_vectors = all_content_vectors[idx : idx + n]
+            batch_cases.append(
+                {
+                    "test_case_id": str(r["test_case_id"]),
+                    "chunks": r["chunks"],
+                    "content_vectors": all_content_vectors[idx : idx + n],
+                    "title_vectors": [all_title_vectors_raw[i]] * n,
+                    "metadata": r["metadata"],
+                }
+            )
             idx += n
-            title_vectors = [all_title_vectors_raw[i]] * n
 
-            test_case_id_str = str(r["test_case_id"])
-            try:
-                upsert_test_case_chunks(
-                    test_case_id=test_case_id_str,
-                    chunks=r["chunks"],
-                    content_vectors=content_vectors,
-                    title_vectors=title_vectors,
-                    metadata=r["metadata"],
+        upsert_test_cases_batch(batch_cases)
+        save_sync_states_batch(
+            [
+                SyncState(
+                    kind="allure_test_case",
+                    source_id=_state_id(source.id, r["test_case_id"]),
+                    content_hash=r["fingerprint"],
+                    version="",
+                    metadata={
+                        "root_source_id": source.id,
+                        "test_case_id": str(r["test_case_id"]),
+                        "project_id": str(source.project_id),
+                        "name": r["name"],
+                    },
                 )
-                save_sync_state(
-                    SyncState(
-                        kind="allure_test_case",
-                        source_id=_state_id(source.id, r["test_case_id"]),
-                        content_hash=r["fingerprint"],
-                        version="",
-                        metadata={
-                            "root_source_id": source.id,
-                            "test_case_id": test_case_id_str,
-                            "project_id": str(source.project_id),
-                            "name": r["name"],
-                        },
-                    )
-                )
-                stats.updated += 1
-            except Exception:
-                stats.errors += 1
+                for r in changed_cases
+            ]
+        )
+        stats.updated = len(changed_cases)
 
     existing_states = list_sync_states("allure_test_case", f"{source.id}:")
     for state in existing_states:

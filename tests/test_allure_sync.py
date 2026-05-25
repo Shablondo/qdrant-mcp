@@ -57,7 +57,10 @@ def test_sync_allure_source_processes_test_cases_in_parallel(monkeypatch) -> Non
     monkeypatch.setenv("RAG_ALLURE_SYNC_MAX_WORKERS", "2")
     monkeypatch.setattr("qdrant_mcp.allure_sync.AllureTestOpsClient", FakeAllureClient)
     monkeypatch.setattr("qdrant_mcp.allure_sync.get_sync_state", lambda kind, source_id: None)
-    monkeypatch.setattr("qdrant_mcp.allure_sync.save_sync_state", lambda state: saved_states.append(state))
+    monkeypatch.setattr(
+        "qdrant_mcp.allure_sync.save_sync_states_batch",
+        lambda states: saved_states.extend(states),
+    )
     monkeypatch.setattr("qdrant_mcp.allure_sync.list_sync_states", lambda kind, source_id_prefix=None: [])
     monkeypatch.setattr("qdrant_mcp.allure_sync.delete_test_cases", lambda ids: None)
     monkeypatch.setattr("qdrant_mcp.allure_sync.delete_sync_state", lambda kind, source_id: None)
@@ -71,8 +74,8 @@ def test_sync_allure_source_processes_test_cases_in_parallel(monkeypatch) -> Non
     )
     monkeypatch.setattr("qdrant_mcp.allure_sync.embed_texts", lambda texts: [[0.1, 0.2] for _ in texts])
     monkeypatch.setattr(
-        "qdrant_mcp.allure_sync.upsert_test_case_chunks",
-        lambda **kwargs: indexed_ids.append(int(kwargs["test_case_id"])) or 1,
+        "qdrant_mcp.allure_sync.upsert_test_cases_batch",
+        lambda test_cases: [indexed_ids.append(int(tc["test_case_id"])) for tc in test_cases],
     )
 
     result = sync_allure_source(SimpleNamespace(id="allure-project-38", project_id=38))
