@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sync_state_store import SYNC_STATE_COLLECTION, _ensure_collection
+from qdrant_mcp.sync_state_store import SYNC_STATE_COLLECTION, _ensure_collection
 
 
 class RaceyCollectionClient:

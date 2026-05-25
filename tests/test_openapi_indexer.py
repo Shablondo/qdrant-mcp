@@ -1,11 +1,11 @@
 import json
 
-from openapi_indexer import build_openapi_attachment
+from qdrant_mcp.openapi_indexer import build_openapi_attachment
 
 
 def test_build_openapi_attachment_includes_curl_template(monkeypatch) -> None:
     monkeypatch.setattr(
-        "openapi_indexer.get_operation",
+        "qdrant_mcp.openapi_indexer.get_operation",
         lambda service, method, path: {
             "service": service,
             "env": "pp-test",

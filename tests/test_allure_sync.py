@@ -1,6 +1,6 @@
 import threading
-from allure_sync import build_test_case_fingerprint
-from allure_sync import sync_allure_source
+from qdrant_mcp.allure_sync import build_test_case_fingerprint
+from qdrant_mcp.allure_sync import sync_allure_source
 from types import SimpleNamespace
 
 
@@ -55,14 +55,14 @@ def test_sync_allure_source_processes_test_cases_in_parallel(monkeypatch) -> Non
             }
 
     monkeypatch.setenv("RAG_ALLURE_SYNC_MAX_WORKERS", "2")
-    monkeypatch.setattr("allure_sync.AllureTestOpsClient", FakeAllureClient)
-    monkeypatch.setattr("allure_sync.get_sync_state", lambda kind, source_id: None)
-    monkeypatch.setattr("allure_sync.save_sync_state", lambda state: saved_states.append(state))
-    monkeypatch.setattr("allure_sync.list_sync_states", lambda kind, source_id_prefix=None: [])
-    monkeypatch.setattr("allure_sync.delete_test_cases", lambda ids: None)
-    monkeypatch.setattr("allure_sync.delete_sync_state", lambda kind, source_id: None)
+    monkeypatch.setattr("qdrant_mcp.allure_sync.AllureTestOpsClient", FakeAllureClient)
+    monkeypatch.setattr("qdrant_mcp.allure_sync.get_sync_state", lambda kind, source_id: None)
+    monkeypatch.setattr("qdrant_mcp.allure_sync.save_sync_state", lambda state: saved_states.append(state))
+    monkeypatch.setattr("qdrant_mcp.allure_sync.list_sync_states", lambda kind, source_id_prefix=None: [])
+    monkeypatch.setattr("qdrant_mcp.allure_sync.delete_test_cases", lambda ids: None)
+    monkeypatch.setattr("qdrant_mcp.allure_sync.delete_sync_state", lambda kind, source_id: None)
     monkeypatch.setattr(
-        "allure_sync.index_one_test_case",
+        "qdrant_mcp.allure_sync.index_one_test_case",
         lambda client, test_case_id, project_id, full_payload=None: indexed_ids.append(test_case_id)
         or {"name": f"TC {test_case_id}", "chunks_total": 1},
     )
