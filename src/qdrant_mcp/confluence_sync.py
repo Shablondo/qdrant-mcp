@@ -133,40 +133,39 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
         if page is None:
             stats.errors += 1
             error_details.append({"page_id": page_id, "message": fetch_error or "unknown error"})
-            return
-
-        plain_text = _html_to_text(page.get("body_html", ""))
-        current = {
-            "version": str(page.get("version") or ""),
-            "content_hash": content_hash(plain_text),
-        }
-        state_id = _state_id(source.id, page_id)
-        previous = states_dict.get(state_id)
-        if page_changed(current, previous):
-            chunks = _chunk_text(plain_text, page.get("title", "")) if plain_text else []
-            if chunks:
-                pending.append(
-                    {
-                        "page_id": page_id,
-                        "chunks": chunks,
-                        "title": page.get("title", ""),
-                        "metadata": {
-                            "title": page.get("title", ""),
-                            "url": page.get("url", ""),
-                            "space_key": page.get("space_key", getattr(source, "space_key", "") or ""),
-                            "root_page_id": root_page_id,
-                            "last_modified": page.get("last_modified", ""),
-                        },
-                        "current": current,
-                    }
-                )
-                pending_chunks += len(chunks)
-                if pending_chunks >= flush_threshold:
-                    flush_pending(pending)
-                    pending = []
-                    pending_chunks = 0
         else:
-            stats.skipped += 1
+            plain_text = _html_to_text(page.get("body_html", ""))
+            current = {
+                "version": str(page.get("version") or ""),
+                "content_hash": content_hash(plain_text),
+            }
+            state_id = _state_id(source.id, page_id)
+            previous = states_dict.get(state_id)
+            if page_changed(current, previous):
+                chunks = _chunk_text(plain_text, page.get("title", "")) if plain_text else []
+                if chunks:
+                    pending.append(
+                        {
+                            "page_id": page_id,
+                            "chunks": chunks,
+                            "title": page.get("title", ""),
+                            "metadata": {
+                                "title": page.get("title", ""),
+                                "url": page.get("url", ""),
+                                "space_key": page.get("space_key", getattr(source, "space_key", "") or ""),
+                                "root_page_id": root_page_id,
+                                "last_modified": page.get("last_modified", ""),
+                            },
+                            "current": current,
+                        }
+                    )
+                    pending_chunks += len(chunks)
+                    if pending_chunks >= flush_threshold:
+                        flush_pending(pending)
+                        pending = []
+                        pending_chunks = 0
+            else:
+                stats.skipped += 1
 
         for child_id in _fetch_child_pages(client, page_id):
             walk(client, child_id)

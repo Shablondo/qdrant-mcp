@@ -11,6 +11,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import tiktoken
 
+from qdrant_mcp.confluence_utils import _clean_text_for_embedding
+
 logger = logging.getLogger(__name__)
 
 CHUNK_MAX_TOKENS = int(os.environ.get("CHUNK_MAX_TOKENS", "500"))
@@ -60,6 +62,8 @@ def _normalize_whitespace(text: str) -> str:
 def _chunk_text(text: str, title: str = "") -> List[str]:
     if not text.strip():
         return []
+
+    text = _clean_text_for_embedding(text)
 
     enc = _get_tokenizer()
     title_prefix = f"# {title}\n\n" if title else ""

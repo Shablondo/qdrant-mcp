@@ -5,6 +5,8 @@ import hashlib
 import json
 from typing import Any
 
+from qdrant_mcp.confluence_utils import _clean_text_for_embedding
+
 
 HTTP_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
 
@@ -59,7 +61,8 @@ def _operation_text(operation: dict[str, Any]) -> str:
         parts.append(f"{parameter.get('in')} {parameter.get('name')} {parameter.get('description', '')}")
     content = operation.get("request_body", {}).get("content", {}) if isinstance(operation.get("request_body"), dict) else {}
     parts.extend(content.keys())
-    return "\n".join(str(part) for part in parts if part)
+    text = "\n".join(str(part) for part in parts if part)
+    return _clean_text_for_embedding(text)
 
 
 def normalize_openapi_operations(

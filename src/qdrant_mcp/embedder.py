@@ -126,7 +126,15 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
             batch_embeddings = _extract_embeddings_from_response(
                 response, len(batch), first_text=batch[0] if batch else ""
             )
-        except AttributeError as exc:
+        except EmbedResponseError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "Unexpected error extracting embeddings: type=%s message=%s "
+                "batch_size=%s response_type=%s response_preview=%r",
+                type(exc).__name__, exc, len(batch), type(response).__name__, repr(response)[:500],
+                exc_info=True,
+            )
             raise EmbedResponseError(
                 f"embedder response extraction failed: type={type(exc).__name__} "
                 f"message={exc} batch_size={len(batch)} response_type={type(response).__name__}"

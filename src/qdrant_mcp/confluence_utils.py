@@ -35,6 +35,18 @@ CHUNK_MAX_TOKENS = int(os.environ.get("CHUNK_MAX_TOKENS", "500"))
 CHUNK_OVERLAP_TOKENS = int(os.environ.get("CHUNK_OVERLAP_TOKENS", "50"))
 
 
+RAG_CLEAN_URLS = os.environ.get("RAG_CLEAN_URLS", "true").lower() not in ("false", "0", "no")
+
+
+def _clean_text_for_embedding(text: str) -> str:
+    """Удаляет URL и маркдаун-ссылки из текста перед эмбеддингом."""
+    if not text or not RAG_CLEAN_URLS:
+        return text
+    text = re.sub(r'\[([^\]]*)\]\([^\)]*\)', r'\1', text)
+    text = re.sub(r'https?://[^\s]+', '[URL]', text)
+    return text
+
+
 def _get_tokenizer():
     """Возвращает токенизатор cl100k_base (GPT-4 совместимый)."""
     try:
@@ -92,6 +104,8 @@ def _chunk_text(text: str, page_title: str = "") -> list[str]:
     """Разбивает текст на чанки по количеству токенов."""
     if not text.strip():
         return []
+
+    text = _clean_text_for_embedding(text)
 
     enc = _get_tokenizer()
 
