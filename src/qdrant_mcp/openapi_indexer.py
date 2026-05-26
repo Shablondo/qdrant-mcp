@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
-from qdrant_mcp.embedder import embed_texts
+from qdrant_mcp.embedder import EmbedResponseError, embed_texts
 from qdrant_mcp.openapi_curl import build_curl_template
 from qdrant_mcp.openapi_fetcher import fetch_openapi_spec
 from qdrant_mcp.openapi_parser import normalize_openapi_operations
@@ -14,6 +15,7 @@ from qdrant_mcp.openapi_qdrant_store import (
     operation_title,
     upsert_operations_batch,
 )
+from qdrant_mcp.sync_batch import get_flush_chunks
 from qdrant_mcp.sync_state_store import (
     SyncState,
     delete_sync_state,
@@ -21,6 +23,8 @@ from qdrant_mcp.sync_state_store import (
     load_sync_states_dict,
     save_sync_states_batch,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _state_id(source_id: str, operation_key: str) -> str:
@@ -69,43 +73,43 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
 
     updated = 0
     skipped = 0
+    errors_count = 0
     seen_keys: set[str] = set()
-    changed_ops: list[dict[str, Any]] = []
+    pending_ops: list[dict[str, Any]] = []
+    pending_chunks = 0
+    error_details: list[dict[str, str]] = []
+    flush_threshold = get_flush_chunks()
 
-    for operation in operations:
-        operation_key = str(operation["operation_key"])
-        seen_keys.add(operation_key)
-        state_id = _state_id(source.id, operation_key)
-        previous = states_dict.get(state_id)
-        if not reindex and previous and previous.get("content_hash") == operation["operation_hash"]:
-            skipped += 1
-            continue
-        changed_ops.append(
-            {
-                "operation": operation,
-                "operation_key": operation_key,
-                "state_id": state_id,
-                "spec_hash": fetched.spec_hash,
-                "service": source.service,
-                "method": operation["method"],
-                "path": operation["path"],
-            }
-        )
+    def flush_operations(items: list[dict[str, Any]]) -> None:
+        nonlocal updated, errors_count, pending_ops, pending_chunks
 
-    if changed_ops:
+        if not items:
+            return
+
         all_content_texts = [
             op["operation"].get("text") or operation_title(op["operation"])
-            for op in changed_ops
+            for op in items
         ]
-        all_title_texts = [operation_title(op["operation"]) for op in changed_ops]
-        all_content_vectors = embed_texts(all_content_texts)
-        all_title_vectors = embed_texts(all_title_texts)
+        all_title_texts = [operation_title(op["operation"]) for op in items]
+
+        try:
+            all_content_vectors = embed_texts(all_content_texts)
+            all_title_vectors = embed_texts(all_title_texts)
+        except EmbedResponseError as exc:
+            logger.error(
+                "Failed to embed batch for source %s: %s. Marking %d operations as errors and continuing.",
+                source.id, exc, len(items),
+            )
+            for op in items:
+                errors_count += 1
+                error_details.append({"operation_key": op["operation_key"], "message": f"embedder failure: {exc}"})
+            return
 
         upsert_operations_batch(
-            operations=[op["operation"] for op in changed_ops],
+            operations=[op["operation"] for op in items],
             content_vectors=all_content_vectors,
             title_vectors=all_title_vectors,
-            operation_keys=[op["operation_key"] for op in changed_ops],
+            operation_keys=[op["operation_key"] for op in items],
         )
 
         save_sync_states_batch(
@@ -124,11 +128,39 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
                         "spec_hash": op["spec_hash"],
                     },
                 )
-                for op in changed_ops
+                for op in items
             ]
         )
 
-        updated = len(changed_ops)
+        updated += len(items)
+
+    for operation in operations:
+        operation_key = str(operation["operation_key"])
+        seen_keys.add(operation_key)
+        state_id = _state_id(source.id, operation_key)
+        previous = states_dict.get(state_id)
+        if not reindex and previous and previous.get("content_hash") == operation["operation_hash"]:
+            skipped += 1
+            continue
+        pending_ops.append(
+            {
+                "operation": operation,
+                "operation_key": operation_key,
+                "state_id": state_id,
+                "spec_hash": fetched.spec_hash,
+                "service": source.service,
+                "method": operation["method"],
+                "path": operation["path"],
+            }
+        )
+        pending_chunks += 1  # one chunk per operation (text + title)
+        if pending_chunks >= flush_threshold:
+            flush_operations(pending_ops)
+            pending_ops = []
+            pending_chunks = 0
+
+    if pending_ops:
+        flush_operations(pending_ops)
 
     deleted = 0
     for state in list_sync_states("openapi_operation", f"{source.id}:"):
@@ -145,9 +177,10 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
         "updated": updated,
         "skipped": skipped,
         "deleted": deleted,
-        "errors": 0,
+        "errors": errors_count,
         "operations_total": len(operations),
         "spec_hash": fetched.spec_hash,
+        "error_details": error_details,
     }
 
 

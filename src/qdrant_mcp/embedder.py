@@ -18,7 +18,7 @@ embedder.py — клиент к OpenAI-compatible Embeddings API.
 import functools
 import logging
 import os
-from typing import List
+from typing import Any, Iterable, List
 
 import httpx
 from openai import OpenAI
@@ -64,6 +64,20 @@ def _get_client() -> OpenAI:
     )
 
 
+class EmbedResponseError(RuntimeError):
+    """Embedder вернул объект неожиданного типа (например, строку вместо CreateEmbeddingResponse)."""
+
+
+def _extract_embeddings_from_response(response: Any, batch_size: int) -> List[List[float]]:
+    if not hasattr(response, "data") or not isinstance(response.data, Iterable):
+        raise EmbedResponseError(
+            f"embedder returned unexpected response: type={type(response).__name__} "
+            f"preview={repr(response)[:500]} batch_size={batch_size}"
+        )
+    sorted_data = sorted(response.data, key=lambda item: item.index)
+    return [item.embedding for item in sorted_data]
+
+
 def embed_texts(texts: List[str]) -> List[List[float]]:
     """Получает эмбеддинги для списка текстов."""
     if not texts:
@@ -81,8 +95,7 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
         )
 
         response = client.embeddings.create(model=EMBED_MODEL, input=batch)
-        sorted_data = sorted(response.data, key=lambda item: item.index)
-        batch_embeddings = [item.embedding for item in sorted_data]
+        batch_embeddings = _extract_embeddings_from_response(response, len(batch))
 
         if batch_embeddings and len(batch_embeddings[0]) != EMBED_DIMENSIONS:
             logger.warning(

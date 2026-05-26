@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 import os
 from typing import Any
 
 from qdrant_mcp.allure_client import AllureTestOpsClient
 from qdrant_mcp.allure_indexer import _build_chunks, _extract_test_case_id
 from qdrant_mcp.allure_qdrant_store import delete_test_cases, upsert_test_cases_batch
-from qdrant_mcp.embedder import embed_texts
+from qdrant_mcp.embedder import EmbedResponseError, embed_texts
+from qdrant_mcp.sync_batch import get_flush_chunks
 from qdrant_mcp.sync_state_store import (
     SyncState,
     delete_sync_state,
@@ -18,6 +20,8 @@ from qdrant_mcp.sync_state_store import (
     load_sync_states_dict,
     save_sync_states_batch,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -127,42 +131,38 @@ def sync_allure_source(source: Any, stale_after_minutes: int | None = None) -> d
     )
 
     states_dict = load_sync_states_dict("allure_test_case", f"{source.id}:")
-
-    if max_workers <= 1:
-        case_results = [_prepare_test_case(source, test_case_id, states_dict) for test_case_id in test_case_ids]
-    else:
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="rag-sync-allure") as executor:
-            futures = [executor.submit(_prepare_test_case, source, test_case_id, states_dict) for test_case_id in test_case_ids]
-            case_results = [future.result() for future in futures]
-
-    changed_cases = [r for r in case_results if r.get("status") == "changed"]
+    pending_changed: list[dict[str, Any]] = []
+    pending_chunks = 0
     error_details: list[dict[str, str]] = []
-    for r in case_results:
-        status = r.get("status")
-        if status == "skipped":
-            stats.skipped += 1
-        elif status == "error":
-            stats.errors += 1
-            error_details.append(
-                {
-                    "test_case_id": str(r.get("test_case_id", "")),
-                    "message": str(r.get("message", "unknown error")),
-                }
-            )
+    flush_threshold = get_flush_chunks()
 
-    if changed_cases:
+    def flush_changed(items: list[dict[str, Any]]) -> None:
+        nonlocal pending_changed, pending_chunks
+        if not items:
+            return
+
         all_chunk_texts: list[str] = []
         all_names: list[str] = []
-        for r in changed_cases:
+        for r in items:
             all_chunk_texts.extend(chunk["text"] for chunk in r["chunks"])
             all_names.append(r["name"])
 
-        all_content_vectors = embed_texts(all_chunk_texts)
-        all_title_vectors_raw = embed_texts(all_names)
+        try:
+            all_content_vectors = embed_texts(all_chunk_texts)
+            all_title_vectors_raw = embed_texts(all_names)
+        except EmbedResponseError as exc:
+            logger.error(
+                "Failed to embed batch for source %s: %s. Marking %d test cases as errors and continuing.",
+                source.id, exc, len(items),
+            )
+            for r in items:
+                stats.errors += 1
+                error_details.append({"test_case_id": r["test_case_id"], "message": f"embedder failure: {exc}"})
+            return
 
         batch_cases: list[dict[str, Any]] = []
         idx = 0
-        for i, r in enumerate(changed_cases):
+        for i, r in enumerate(items):
             n = len(r["chunks"])
             batch_cases.append(
                 {
@@ -190,10 +190,61 @@ def sync_allure_source(source: Any, stale_after_minutes: int | None = None) -> d
                         "name": r["name"],
                     },
                 )
-                for r in changed_cases
+                for r in items
             ]
         )
-        stats.updated = len(changed_cases)
+        stats.updated += len(items)
+
+    if max_workers <= 1:
+        for test_case_id in test_case_ids:
+            r = _prepare_test_case(source, test_case_id, states_dict)
+            status = r.get("status")
+            if status == "skipped":
+                stats.skipped += 1
+            elif status == "error":
+                stats.errors += 1
+                error_details.append(
+                    {
+                        "test_case_id": str(r.get("test_case_id", "")),
+                        "message": str(r.get("message", "unknown error")),
+                    }
+                )
+            elif status == "changed":
+                pending_changed.append(r)
+                pending_chunks += len(r["chunks"])
+                if pending_chunks >= flush_threshold:
+                    flush_changed(pending_changed)
+                    pending_changed = []
+                    pending_chunks = 0
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="rag-sync-allure") as executor:
+            futures = {
+                executor.submit(_prepare_test_case, source, test_case_id, states_dict): test_case_id
+                for test_case_id in test_case_ids
+            }
+            for future in as_completed(futures):
+                r = future.result()
+                status = r.get("status")
+                if status == "skipped":
+                    stats.skipped += 1
+                elif status == "error":
+                    stats.errors += 1
+                    error_details.append(
+                        {
+                            "test_case_id": str(r.get("test_case_id", "")),
+                            "message": str(r.get("message", "unknown error")),
+                        }
+                    )
+                elif status == "changed":
+                    pending_changed.append(r)
+                    pending_chunks += len(r["chunks"])
+                    if pending_chunks >= flush_threshold:
+                        flush_changed(pending_changed)
+                        pending_changed = []
+                        pending_chunks = 0
+
+    if pending_changed:
+        flush_changed(pending_changed)
 
     existing_states = list_sync_states("allure_test_case", f"{source.id}:")
     for state in existing_states:
