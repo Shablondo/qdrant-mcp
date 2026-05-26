@@ -94,7 +94,13 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
             len(batch),
         )
 
-        response = client.embeddings.create(model=EMBED_MODEL, input=batch)
+        try:
+            response = client.embeddings.create(model=EMBED_MODEL, input=batch)
+        except Exception as exc:
+            raise EmbedResponseError(
+                f"embedder API call failed: type={type(exc).__name__} "
+                f"message={exc} batch_size={len(batch)}"
+            ) from exc
         batch_embeddings = _extract_embeddings_from_response(response, len(batch))
 
         if batch_embeddings and len(batch_embeddings[0]) != EMBED_DIMENSIONS:
