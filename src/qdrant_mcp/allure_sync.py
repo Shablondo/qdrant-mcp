@@ -141,18 +141,12 @@ def sync_allure_source(source: Any, stale_after_minutes: int | None = None) -> d
         if not items:
             return
 
-        all_chunk_texts: list[str] = []
-        all_names: list[str] = []
-        for r in items:
-            all_chunk_texts.extend(chunk["text"] for chunk in r["chunks"])
-            all_names.append(r["name"])
-
+        all_names = [r["name"] for r in items]
         try:
-            all_content_vectors = embed_texts(all_chunk_texts)
             all_title_vectors_raw = embed_texts(all_names)
         except EmbedResponseError as exc:
             logger.error(
-                "Failed to embed batch for source %s: %s. Marking %d test cases as errors and continuing.",
+                "Failed to embed names for source %s: %s. Marking %d test cases as errors and continuing.",
                 source.id, exc, len(items),
             )
             for r in items:
@@ -161,39 +155,52 @@ def sync_allure_source(source: Any, stale_after_minutes: int | None = None) -> d
             return
 
         batch_cases: list[dict[str, Any]] = []
-        idx = 0
+        successful_items: list[dict[str, Any]] = []
         for i, r in enumerate(items):
+            chunk_texts = [chunk["text"] for chunk in r["chunks"]]
+            try:
+                content_vectors = embed_texts(chunk_texts)
+            except EmbedResponseError as exc:
+                logger.error(
+                    "Failed to embed test case %s for source %s: %s",
+                    r["test_case_id"], source.id, exc,
+                )
+                stats.errors += 1
+                error_details.append({"test_case_id": r["test_case_id"], "message": f"embedder failure: {exc}"})
+                continue
+
             n = len(r["chunks"])
             batch_cases.append(
                 {
                     "test_case_id": str(r["test_case_id"]),
                     "chunks": r["chunks"],
-                    "content_vectors": all_content_vectors[idx : idx + n],
+                    "content_vectors": content_vectors,
                     "title_vectors": [all_title_vectors_raw[i]] * n,
                     "metadata": r["metadata"],
                 }
             )
-            idx += n
+            successful_items.append(r)
 
-        upsert_test_cases_batch(batch_cases)
-        save_sync_states_batch(
-            [
-                SyncState(
-                    kind="allure_test_case",
-                    source_id=_state_id(source.id, r["test_case_id"]),
-                    content_hash=r["fingerprint"],
-                    version="",
-                    metadata={
-                        "root_source_id": source.id,
-                        "test_case_id": str(r["test_case_id"]),
-                        "project_id": str(source.project_id),
-                        "name": r["name"],
-                    },
-                )
-                for r in items
-            ]
-        )
-        stats.updated += len(items)
+        if batch_cases:
+            upsert_test_cases_batch(batch_cases)
+            save_sync_states_batch(
+                [
+                    SyncState(
+                        kind="allure_test_case",
+                        source_id=_state_id(source.id, r["test_case_id"]),
+                        content_hash=r["fingerprint"],
+                        version="",
+                        metadata={
+                            "root_source_id": source.id,
+                            "test_case_id": str(r["test_case_id"]),
+                            "project_id": str(source.project_id),
+                            "name": r["name"],
+                        },
+                    )
+                    for r in successful_items
+                ]
+            )
+            stats.updated += len(successful_items)
 
     if max_workers <= 1:
         for test_case_id in test_case_ids:

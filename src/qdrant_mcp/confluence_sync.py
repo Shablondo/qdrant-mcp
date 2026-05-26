@@ -61,18 +61,12 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
         if not items:
             return
 
-        all_chunk_texts: list[str] = []
-        all_titles: list[str] = []
-        for p in items:
-            all_chunk_texts.extend(p["chunks"])
-            all_titles.append(p["title"])
-
+        all_titles = [p["title"] for p in items]
         try:
-            all_content_vectors = embed_texts(all_chunk_texts)
             all_title_vectors_raw = embed_texts(all_titles)
         except EmbedResponseError as exc:
             logger.error(
-                "Failed to embed batch for source %s: %s. Marking %d pages as errors and continuing.",
+                "Failed to embed titles for source %s: %s. Marking %d pages as errors and continuing.",
                 source.id, exc, len(items),
             )
             for p in items:
@@ -81,39 +75,51 @@ def sync_confluence_source(source: Any, stale_after_minutes: int | None = None) 
             return
 
         batch_pages: list[dict[str, Any]] = []
-        idx = 0
+        successful_items: list[dict[str, Any]] = []
         for i, p in enumerate(items):
+            try:
+                content_vectors = embed_texts(p["chunks"])
+            except EmbedResponseError as exc:
+                logger.error(
+                    "Failed to embed page %s for source %s: %s",
+                    p["page_id"], source.id, exc,
+                )
+                stats.errors += 1
+                error_details.append({"page_id": p["page_id"], "message": f"embedder failure: {exc}"})
+                continue
+
             n = len(p["chunks"])
             batch_pages.append(
                 {
                     "page_id": p["page_id"],
                     "chunks": p["chunks"],
-                    "content_vectors": all_content_vectors[idx : idx + n],
+                    "content_vectors": content_vectors,
                     "title_vectors": [all_title_vectors_raw[i]] * n,
                     "metadata": p["metadata"],
                 }
             )
-            idx += n
+            successful_items.append(p)
 
-        upsert_page_chunks_batch(batch_pages)
-        save_sync_states_batch(
-            [
-                SyncState(
-                    kind="confluence_page",
-                    source_id=_state_id(source.id, p["page_id"]),
-                    content_hash=p["current"]["content_hash"],
-                    version=p["current"]["version"],
-                    metadata={
-                        "root_source_id": source.id,
-                        "root_page_id": root_page_id,
-                        "page_id": p["page_id"],
-                        "title": p["title"],
-                    },
-                )
-                for p in items
-            ]
-        )
-        stats.updated += len(items)
+        if batch_pages:
+            upsert_page_chunks_batch(batch_pages)
+            save_sync_states_batch(
+                [
+                    SyncState(
+                        kind="confluence_page",
+                        source_id=_state_id(source.id, p["page_id"]),
+                        content_hash=p["current"]["content_hash"],
+                        version=p["current"]["version"],
+                        metadata={
+                            "root_source_id": source.id,
+                            "root_page_id": root_page_id,
+                            "page_id": p["page_id"],
+                            "title": p["title"],
+                        },
+                    )
+                    for p in successful_items
+                ]
+            )
+            stats.updated += len(successful_items)
 
     def walk(client: Any, page_id: str) -> None:
         nonlocal pending, pending_chunks

@@ -86,53 +86,60 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
         if not items:
             return
 
-        all_content_texts = [
-            op["operation"].get("text") or operation_title(op["operation"])
-            for op in items
-        ]
-        all_title_texts = [operation_title(op["operation"]) for op in items]
+        successful_ops: list[dict[str, Any]] = []
+        successful_content_vectors: list[list[float]] = []
+        successful_title_vectors: list[list[float]] = []
+        successful_items: list[dict[str, Any]] = []
 
-        try:
-            all_content_vectors = embed_texts(all_content_texts)
-            all_title_vectors = embed_texts(all_title_texts)
-        except EmbedResponseError as exc:
-            logger.error(
-                "Failed to embed batch for source %s: %s. Marking %d operations as errors and continuing.",
-                source.id, exc, len(items),
-            )
-            for op in items:
+        for op in items:
+            content_text = op["operation"].get("text") or operation_title(op["operation"])
+            title_text = operation_title(op["operation"])
+            try:
+                content_vecs = embed_texts([content_text])
+                title_vecs = embed_texts([title_text])
+            except EmbedResponseError as exc:
+                logger.error(
+                    "Failed to embed operation %s for source %s: %s",
+                    op["operation_key"], source.id, exc,
+                )
                 errors_count += 1
                 error_details.append({"operation_key": op["operation_key"], "message": f"embedder failure: {exc}"})
-            return
+                continue
 
-        upsert_operations_batch(
-            operations=[op["operation"] for op in items],
-            content_vectors=all_content_vectors,
-            title_vectors=all_title_vectors,
-            operation_keys=[op["operation_key"] for op in items],
-        )
+            successful_ops.append(op["operation"])
+            successful_content_vectors.append(content_vecs[0] if content_vecs else [])
+            successful_title_vectors.append(title_vecs[0] if title_vecs else [])
+            successful_items.append(op)
 
-        save_sync_states_batch(
-            [
-                SyncState(
-                    kind="openapi_operation",
-                    source_id=op["state_id"],
-                    content_hash=op["operation"]["operation_hash"],
-                    version=op["spec_hash"],
-                    metadata={
-                        "root_source_id": source.id,
-                        "operation_key": op["operation_key"],
-                        "service": op["service"],
-                        "method": op["method"],
-                        "path": op["path"],
-                        "spec_hash": op["spec_hash"],
-                    },
-                )
-                for op in items
-            ]
-        )
+        if successful_ops:
+            upsert_operations_batch(
+                operations=successful_ops,
+                content_vectors=successful_content_vectors,
+                title_vectors=successful_title_vectors,
+                operation_keys=[op["operation_key"] for op in successful_items],
+            )
 
-        updated += len(items)
+            save_sync_states_batch(
+                [
+                    SyncState(
+                        kind="openapi_operation",
+                        source_id=op["state_id"],
+                        content_hash=op["operation"]["operation_hash"],
+                        version=op["spec_hash"],
+                        metadata={
+                            "root_source_id": source.id,
+                            "operation_key": op["operation_key"],
+                            "service": op["service"],
+                            "method": op["method"],
+                            "path": op["path"],
+                            "spec_hash": op["spec_hash"],
+                        },
+                    )
+                    for op in successful_items
+                ]
+            )
+
+            updated += len(successful_items)
 
     for operation in operations:
         operation_key = str(operation["operation_key"])
