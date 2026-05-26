@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import html2text
@@ -25,6 +26,9 @@ logger = logging.getLogger(__name__)
 CONFLUENCE_URL = os.environ.get("CONFLUENCE_URL", "").rstrip("/")
 CONFLUENCE_PERSONAL_TOKEN = os.environ.get("CONFLUENCE_PERSONAL_TOKEN", "")
 CONFLUENCE_SSL_VERIFY = os.environ.get("CONFLUENCE_SSL_VERIFY", "true").lower() not in ("false", "0", "no")
+
+# Задержка между запросами к Confluence API (в мс) — чтобы не триггерить WAF/rate-limiter
+_CONFLUENCE_DELAY = float(os.environ.get("CONFLUENCE_REQUEST_DELAY_MS", "50")) / 1000
 
 # Параметры чанкинга
 CHUNK_MAX_TOKENS = int(os.environ.get("CHUNK_MAX_TOKENS", "500"))
@@ -160,6 +164,7 @@ def _fetch_page(client: httpx.Client, page_id: str) -> Tuple[Optional[Dict[str, 
     }
 
     try:
+        time.sleep(_CONFLUENCE_DELAY)
         response = client.get(url, params=params)
         response.raise_for_status()
         if not response.text.strip():
@@ -232,6 +237,7 @@ def _fetch_child_pages(client: httpx.Client, page_id: str) -> list[str]:
         params = {"start": start, "limit": limit, "expand": "version"}
 
         try:
+            time.sleep(_CONFLUENCE_DELAY)
             response = client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
