@@ -86,6 +86,12 @@ def _chunk_text(text: str, title: str = "") -> List[str]:
                 current_tokens = len(enc.encode(overlap)) if overlap else 0
 
             sentences = re.split(r"(?<=[.!?])\s+", paragraph)
+            if len(sentences) == 1 and paragraph_tokens > effective_max:
+                tokens = enc.encode(paragraph)
+                for start in range(0, len(tokens), effective_max):
+                    chunk_text = enc.decode(tokens[start:start + effective_max])
+                    chunks.append(title_prefix + chunk_text)
+                continue
             for sentence in sentences:
                 sentence_tokens = len(enc.encode(sentence))
                 if current_tokens + sentence_tokens > effective_max and current_paragraphs:
