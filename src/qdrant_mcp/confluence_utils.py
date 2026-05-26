@@ -28,7 +28,7 @@ CONFLUENCE_PERSONAL_TOKEN = os.environ.get("CONFLUENCE_PERSONAL_TOKEN", "")
 CONFLUENCE_SSL_VERIFY = os.environ.get("CONFLUENCE_SSL_VERIFY", "true").lower() not in ("false", "0", "no")
 
 # Задержка между запросами к Confluence API (в мс) — чтобы не триггерить WAF/rate-limiter
-_CONFLUENCE_DELAY = float(os.environ.get("CONFLUENCE_REQUEST_DELAY_MS", "200")) / 1000
+_CONFLUENCE_DELAY = float(os.environ.get("CONFLUENCE_REQUEST_DELAY_MS", "50")) / 1000
 
 # Параметры чанкинга
 CHUNK_MAX_TOKENS = int(os.environ.get("CHUNK_MAX_TOKENS", "500"))
