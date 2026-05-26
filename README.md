@@ -564,25 +564,32 @@ qdrant-mcp/
 └── src/
     └── qdrant_mcp/
         ├── __init__.py
-        ├── main.py                   # FastMCP сервер, регистрация инструментов
+        ├── main.py                   # Точка входа, регистрация инструментов
+        ├── server.py                 # FastMCP инициализация
         ├── allure_client.py          # Клиент к Allure TestOps API
         ├── allure_indexer.py         # Индексация тест-кейсов Allure
         ├── allure_qdrant_store.py    # Хранение и поиск тест-кейсов Allure в Qdrant
         ├── allure_sync.py            # Синхронизация Allure sources
+        ├── allure_tools.py           # MCP инструменты Allure (index, search, get)
         ├── confluence_sync.py        # Синхронизация Confluence sources
+        ├── confluence_tools.py       # MCP инструменты Confluence (index, search, get)
+        ├── confluence_utils.py       # Общие утилиты Confluence (fetch, clean, chunk)
         ├── embedder.py               # Клиент к OpenAI / OpenAI-compatible Embeddings API
-        ├── indexer.py                # Рекурсивный обход Confluence + запись в Qdrant
         ├── openapi_curl.py           # Генерация curl-шаблонов
         ├── openapi_fetcher.py        # Загрузка OpenAPI спецификаций
         ├── openapi_indexer.py        # Индексация OpenAPI операций
         ├── openapi_intent.py         # Извлечение HTTP методов из запроса
         ├── openapi_parser.py         # Парсинг OpenAPI спецификаций
         ├── openapi_qdrant_store.py   # Хранение OpenAPI операций в Qdrant
+        ├── openapi_tools.py          # MCP инструменты OpenAPI (search, find_curl)
         ├── qdrant_store.py           # Обёртка над qdrant-client SDK
+        ├── qdrant_utils.py           # Shared Qdrant client (singleton)
         ├── rag_sources.py            # Модели RAG sources
         ├── rag_sync.py               # Оркестратор синхронизации
         ├── rag_sync_cli.py           # CLI для ручной синхронизации
+        ├── sync_batch.py             # Конфигурация flush-чанков для стриминга
         ├── sync_state_store.py       # Хранение состояния синхронизации
+        ├── sync_tools.py             # MCP инструменты синхронизации
         └── tool_utils.py             # Общие утилиты инструментов и форматирования
 ```
 

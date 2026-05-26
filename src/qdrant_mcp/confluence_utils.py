@@ -30,9 +30,6 @@ CONFLUENCE_SSL_VERIFY = os.environ.get("CONFLUENCE_SSL_VERIFY", "true").lower() 
 # Задержка между запросами к Confluence API (в мс) — чтобы не триггерить WAF/rate-limiter
 _CONFLUENCE_DELAY = float(os.environ.get("CONFLUENCE_REQUEST_DELAY_MS", "50")) / 1000
 
-# Задержка между retry-попытками при WAF/ошибках Confluence
-RAG_CONFLUENCE_RETRY_DELAY_MS = int(os.environ.get("RAG_CONFLUENCE_RETRY_DELAY_MS", "2000"))
-
 # Параметры чанкинга
 CHUNK_MAX_TOKENS = int(os.environ.get("CHUNK_MAX_TOKENS", "500"))
 CHUNK_OVERLAP_TOKENS = int(os.environ.get("CHUNK_OVERLAP_TOKENS", "50"))
@@ -70,6 +67,7 @@ def _get_http_client() -> httpx.Client:
             "Authorization": f"Bearer {CONFLUENCE_PERSONAL_TOKEN}",
             "Accept": "application/json",
             "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (compatible; QdrantMCP/1.0)",
         },
         verify=CONFLUENCE_SSL_VERIFY,
         timeout=30.0,
@@ -174,7 +172,7 @@ def _chunk_text(text: str, page_title: str = "") -> list[str]:
 
 def _fetch_page(client: httpx.Client, page_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """
-    Получает страницу Confluence по ID с ретраями.
+    Получает страницу Confluence по ID.
 
     Returns:
         (page_dict, None) при успехе.
@@ -185,125 +183,96 @@ def _fetch_page(client: httpx.Client, page_id: str) -> Tuple[Optional[Dict[str, 
         "expand": "body.storage,version,space",
         "status": "current",
     }
-    retry_delay = RAG_CONFLUENCE_RETRY_DELAY_MS / 1000
-    max_retries = 3
 
-    for attempt in range(1, max_retries + 1):
-        try:
-            time.sleep(_CONFLUENCE_DELAY)
-            response = client.get(url, params=params)
-            response.raise_for_status()
-            if not response.text.strip():
-                raise ValueError("empty response body")
-            data = response.json()
-        except (json.JSONDecodeError, httpx.HTTPStatusError, ValueError) as e:
-            if attempt < max_retries:
-                logger.warning("Retry %d/%d for page %s: %s", attempt, max_retries, page_id, e)
-                time.sleep(retry_delay)
-                continue
-            if isinstance(e, json.JSONDecodeError):
-                preview = response.text[:200].replace("\n", " ")
-                return None, f"HTTP {response.status_code}: invalid JSON after {max_retries} attempts, body: «{preview}»"
-            if isinstance(e, httpx.HTTPStatusError):
-                return None, f"HTTP {e.response.status_code} after {max_retries} attempts"
-            return None, f"empty response after {max_retries} attempts"
-        except Exception as e:
-            if attempt < max_retries:
-                logger.warning("Retry %d/%d for page %s: %s", attempt, max_retries, page_id, e)
-                time.sleep(retry_delay)
-                continue
-            message = str(e) or type(e).__name__
-            logger.error("Failed to fetch page %s after %d attempts: %s", page_id, max_retries, e)
-            return None, f"{message} after {max_retries} attempts"
+    try:
+        time.sleep(_CONFLUENCE_DELAY)
+        response = client.get(url, params=params)
+        response.raise_for_status()
+        if not response.text.strip():
+            return None, f"HTTP {response.status_code}: empty response body"
+        data = response.json()
+    except httpx.HTTPStatusError as e:
+        message = f"HTTP {e.response.status_code}"
+        logger.warning("HTTP error fetching page %s: %s", page_id, e.response.status_code)
+        return None, message
+    except json.JSONDecodeError:
+        preview = response.text[:200].replace("\n", " ")
+        message = f"HTTP {response.status_code}: invalid JSON, body: «{preview}»"
+        logger.warning("Non-JSON response fetching page %s: %s", page_id, preview)
+        return None, message
+    except Exception as e:
+        message = str(e) or type(e).__name__
+        logger.error("Error fetching page %s: %s", page_id, e)
+        return None, message
 
-        body_html = ""
-        try:
-            body_html = data.get("body", {}).get("storage", {}).get("value", "")
-        except (KeyError, TypeError, AttributeError):
-            pass
+    body_html = ""
+    try:
+        body_html = data.get("body", {}).get("storage", {}).get("value", "")
+    except (KeyError, TypeError, AttributeError):
+        pass
 
-        space_key = ""
-        try:
-            space_key = data.get("space", {}).get("key", "")
-        except (KeyError, TypeError, AttributeError):
-            pass
+    space_key = ""
+    try:
+        space_key = data.get("space", {}).get("key", "")
+    except (KeyError, TypeError, AttributeError):
+        pass
 
-        last_modified = ""
-        version = ""
-        try:
-            version_data = data.get("version", {})
-            last_modified = version_data.get("when", "")
-            version = str(version_data.get("number", ""))
-        except (KeyError, TypeError, AttributeError):
-            pass
+    last_modified = ""
+    version = ""
+    try:
+        version_data = data.get("version", {})
+        last_modified = version_data.get("when", "")
+        version = str(version_data.get("number", ""))
+    except (KeyError, TypeError, AttributeError):
+        pass
 
-        page_url = f"{CONFLUENCE_URL}/pages/viewpage.action?pageId={page_id}"
-        try:
-            links = data.get("_links", {})
-            webui = links.get("webui", "")
-            base = links.get("base", CONFLUENCE_URL)
-            if webui:
-                page_url = f"{base}{webui}"
-        except (KeyError, TypeError, AttributeError):
-            pass
+    page_url = f"{CONFLUENCE_URL}/pages/viewpage.action?pageId={page_id}"
+    try:
+        links = data.get("_links", {})
+        webui = links.get("webui", "")
+        base = links.get("base", CONFLUENCE_URL)
+        if webui:
+            page_url = f"{base}{webui}"
+    except (KeyError, TypeError, AttributeError):
+        pass
 
-        return {
-            "id": page_id,
-            "title": data.get("title", ""),
-            "body_html": body_html,
-            "url": page_url,
-            "space_key": space_key,
-            "last_modified": last_modified,
-            "version": version,
-        }, None
-
-    return None, f"max retries ({max_retries}) exceeded"
+    return {
+        "id": page_id,
+        "title": data.get("title", ""),
+        "body_html": body_html,
+        "url": page_url,
+        "space_key": space_key,
+        "last_modified": last_modified,
+        "version": version,
+    }, None
 
 
 def _fetch_child_pages(client: httpx.Client, page_id: str) -> list[str]:
-    """Возвращает список ID дочерних страниц с ретраями."""
+    """Возвращает список ID дочерних страниц."""
     child_ids: list[str] = []
     start = 0
     limit = 50
-    retry_delay = RAG_CONFLUENCE_RETRY_DELAY_MS / 1000
-    max_retries = 3
 
     while True:
         url = f"{CONFLUENCE_URL}/rest/api/content/{page_id}/child/page"
         params = {"start": start, "limit": limit, "expand": "version"}
 
-        for attempt in range(1, max_retries + 1):
-            try:
-                time.sleep(_CONFLUENCE_DELAY)
-                response = client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
-            except (json.JSONDecodeError, httpx.HTTPStatusError) as e:
-                if attempt < max_retries:
-                    logger.warning("Retry %d/%d child pages for %s: %s", attempt, max_retries, page_id, e)
-                    time.sleep(retry_delay)
-                    continue
-                logger.warning("Failed to fetch child pages for %s after %d attempts: %s", page_id, max_retries, e)
-                start = float("inf")
-                break
-            except Exception as e:
-                if attempt < max_retries:
-                    logger.warning("Retry %d/%d child pages for %s: %s", attempt, max_retries, page_id, e)
-                    time.sleep(retry_delay)
-                    continue
-                logger.warning("Error fetching child pages for %s: %s", page_id, e)
-                start = float("inf")
-                break
-
-            results = data.get("results", [])
-            for child in results:
-                child_ids.append(child.get("id", ""))
-
-            size = data.get("size", 0)
-            if size < limit:
-                start = float("inf")
-            else:
-                start += limit
+        try:
+            time.sleep(_CONFLUENCE_DELAY)
+            response = client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            logger.warning("Error fetching child pages for %s: %s", page_id, e)
             break
+
+        results = data.get("results", [])
+        for child in results:
+            child_ids.append(child.get("id", ""))
+
+        size = data.get("size", 0)
+        if size < limit:
+            break
+        start += limit
 
     return [cid for cid in child_ids if cid]

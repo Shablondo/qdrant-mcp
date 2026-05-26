@@ -68,27 +68,20 @@ class EmbedResponseError(RuntimeError):
     """Embedder вернул объект неожиданного типа (например, строку вместо CreateEmbeddingResponse)."""
 
 
-def _extract_embeddings_from_response(response: Any, batch_size: int, first_text: str = "") -> List[List[float]]:
+def _extract_embeddings_from_response(response: Any, batch_size: int) -> List[List[float]]:
     if not hasattr(response, "data") or not isinstance(response.data, Iterable):
         raise EmbedResponseError(
             f"embedder returned unexpected response: type={type(response).__name__} "
-            f"preview={repr(response)[:500]} batch_size={batch_size}"
-            f"{' first_text_preview=' + repr(first_text[:200]) if first_text else ''}"
+            f"response={response} batch_size={batch_size}"
         )
     try:
         sorted_data = sorted(response.data, key=lambda item: item.index)
         return [item.embedding for item in sorted_data]
     except AttributeError as exc:
-        data_detail = ""
-        try:
-            data_items = list(response.data)
-            data_detail = f" data_len={len(data_items)} data_preview={repr(data_items[:5])}"
-        except Exception:
-            pass
         raise EmbedResponseError(
             f"embedder response data attribute error: type={type(exc).__name__} "
             f"message={exc} batch_size={batch_size}"
-            f" response_type={type(response).__name__} data_type={type(response.data).__name__}{data_detail}"
+            f" response_type={type(response).__name__} data_type={type(response.data).__name__}"
         ) from exc
 
 
@@ -111,34 +104,18 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
         try:
             response = client.embeddings.create(model=EMBED_MODEL, input=batch)
         except Exception as exc:
-            extra = ""
-            if hasattr(exc, "response") and hasattr(exc.response, "text"):
-                try:
-                    extra = f" response_body={exc.response.text[:300]}"
-                except Exception:
-                    pass
             raise EmbedResponseError(
                 f"embedder API call failed: type={type(exc).__name__} "
-                f"message={exc} batch_size={len(batch)}{extra}"
-                f" first_text_preview={repr(batch[0][:200])}"
+                f"message={exc} batch_size={len(batch)}"
             ) from exc
         try:
-            batch_embeddings = _extract_embeddings_from_response(
-                response, len(batch), first_text=batch[0] if batch else ""
-            )
+            batch_embeddings = _extract_embeddings_from_response(response, len(batch))
         except EmbedResponseError:
             raise
         except Exception as exc:
-            logger.error(
-                "Unexpected error extracting embeddings: type=%s message=%s "
-                "batch_size=%s response_type=%s response_preview=%r",
-                type(exc).__name__, exc, len(batch), type(response).__name__, repr(response)[:500],
-                exc_info=True,
-            )
             raise EmbedResponseError(
                 f"embedder response extraction failed: type={type(exc).__name__} "
                 f"message={exc} batch_size={len(batch)} response_type={type(response).__name__}"
-                f" first_text_preview={repr(batch[0][:200]) if batch else ''}"
             ) from exc
 
         if batch_embeddings and len(batch_embeddings[0]) != EMBED_DIMENSIONS:
