@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://host.docker.internal:6333")
 ALLURE_QDRANT_COLLECTION = os.environ.get("ALLURE_QDRANT_COLLECTION", "allure_test_cases")
-EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
+EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "2560"))
 _ENSURE_COLLECTION_LOCK = threading.Lock()
 
 UPSERT_BATCH_SIZE = int(os.environ.get("ALLURE_UPSERT_BATCH_SIZE", "64"))

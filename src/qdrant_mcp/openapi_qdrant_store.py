@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://host.docker.internal:6333")
 OPENAPI_QDRANT_COLLECTION = os.environ.get("OPENAPI_QDRANT_COLLECTION", "openapi_operations")
-EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
+EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "2560"))
 _ENSURE_COLLECTION_LOCK = threading.Lock()
 
 

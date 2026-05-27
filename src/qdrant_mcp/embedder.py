@@ -1,6 +1,6 @@
 """
 embedder.py — клиент к OpenAI-compatible Embeddings API.
-Модель по умолчанию: text-embedding-3-large, размерность: 3072
+Модель по умолчанию: text-embedding-3-large, размерность: 2560
 
 Основная переменная для ключа: OPENAI_API_KEY.
 Для обратной совместимости также поддерживается COPILOT_API_KEY.
@@ -18,7 +18,7 @@ embedder.py — клиент к OpenAI-compatible Embeddings API.
 import functools
 import logging
 import os
-from typing import List
+from typing import Any, Iterable, List
 
 import httpx
 from openai import OpenAI
@@ -29,7 +29,7 @@ EMBED_API_ENDPOINT = os.environ.get("EMBED_API_ENDPOINT", "")
 EMBED_API_BASE = os.environ.get("EMBED_API_BASE", "https://api.openai.com/v1")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "") or os.environ.get("COPILOT_API_KEY", "")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-3-large")
-EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "3072"))
+EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "2560"))
 EMBED_BATCH_SIZE = int(os.environ.get("EMBED_BATCH_SIZE", "32"))
 
 
@@ -64,6 +64,27 @@ def _get_client() -> OpenAI:
     )
 
 
+class EmbedResponseError(RuntimeError):
+    """Embedder вернул объект неожиданного типа (например, строку вместо CreateEmbeddingResponse)."""
+
+
+def _extract_embeddings_from_response(response: Any, batch_size: int) -> List[List[float]]:
+    if not hasattr(response, "data") or not isinstance(response.data, Iterable):
+        raise EmbedResponseError(
+            f"embedder returned unexpected response: type={type(response).__name__} "
+            f"response={response} batch_size={batch_size}"
+        )
+    try:
+        sorted_data = sorted(response.data, key=lambda item: item.index)
+        return [item.embedding for item in sorted_data]
+    except AttributeError as exc:
+        raise EmbedResponseError(
+            f"embedder response data attribute error: type={type(exc).__name__} "
+            f"message={exc} batch_size={batch_size}"
+            f" response_type={type(response).__name__} data_type={type(response.data).__name__}"
+        ) from exc
+
+
 def embed_texts(texts: List[str]) -> List[List[float]]:
     """Получает эмбеддинги для списка текстов."""
     if not texts:
@@ -80,9 +101,22 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
             len(batch),
         )
 
-        response = client.embeddings.create(model=EMBED_MODEL, input=batch)
-        sorted_data = sorted(response.data, key=lambda item: item.index)
-        batch_embeddings = [item.embedding for item in sorted_data]
+        try:
+            response = client.embeddings.create(model=EMBED_MODEL, input=batch)
+        except Exception as exc:
+            raise EmbedResponseError(
+                f"embedder API call failed: type={type(exc).__name__} "
+                f"message={exc} batch_size={len(batch)}"
+            ) from exc
+        try:
+            batch_embeddings = _extract_embeddings_from_response(response, len(batch))
+        except EmbedResponseError:
+            raise
+        except Exception as exc:
+            raise EmbedResponseError(
+                f"embedder response extraction failed: type={type(exc).__name__} "
+                f"message={exc} batch_size={len(batch)} response_type={type(response).__name__}"
+            ) from exc
 
         if batch_embeddings and len(batch_embeddings[0]) != EMBED_DIMENSIONS:
             logger.warning(

@@ -21,7 +21,7 @@ class EmbedderConfigTests(unittest.TestCase):
         )
 
         self.assertEqual(embedder.EMBED_MODEL, "text-embedding-3-large")
-        self.assertEqual(embedder.EMBED_DIMENSIONS, 3072)
+        self.assertEqual(embedder.EMBED_DIMENSIONS, 2560)
 
     def test_openai_api_key_takes_priority(self):
         embedder = load_embedder_with_env(

@@ -11,6 +11,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import tiktoken
 
+from qdrant_mcp.confluence_utils import _clean_text_for_embedding
+
 logger = logging.getLogger(__name__)
 
 CHUNK_MAX_TOKENS = int(os.environ.get("CHUNK_MAX_TOKENS", "500"))
@@ -61,6 +63,8 @@ def _chunk_text(text: str, title: str = "") -> List[str]:
     if not text.strip():
         return []
 
+    text = _clean_text_for_embedding(text)
+
     enc = _get_tokenizer()
     title_prefix = f"# {title}\n\n" if title else ""
     title_tokens = len(enc.encode(title_prefix))
@@ -82,6 +86,12 @@ def _chunk_text(text: str, title: str = "") -> List[str]:
                 current_tokens = len(enc.encode(overlap)) if overlap else 0
 
             sentences = re.split(r"(?<=[.!?])\s+", paragraph)
+            if len(sentences) == 1 and paragraph_tokens > effective_max:
+                tokens = enc.encode(paragraph)
+                for start in range(0, len(tokens), effective_max):
+                    chunk_text = enc.decode(tokens[start:start + effective_max])
+                    chunks.append(title_prefix + chunk_text)
+                continue
             for sentence in sentences:
                 sentence_tokens = len(enc.encode(sentence))
                 if current_tokens + sentence_tokens > effective_max and current_paragraphs:

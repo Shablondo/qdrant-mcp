@@ -1,8 +1,6 @@
 import threading
 from types import SimpleNamespace
 
-import pytest
-
 from qdrant_mcp.sync_state_store import SYNC_STATE_COLLECTION, _ensure_collection
 
 

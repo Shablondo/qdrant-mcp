@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from qdrant_mcp.confluence_sync import content_hash, page_changed, sync_confluence_source
+from qdrant_mcp.embedder import EmbedResponseError
 
 
 def test_page_changed_when_version_differs() -> None:
@@ -88,3 +89,93 @@ def test_sync_confluence_source_walks_root_and_nested_children(monkeypatch) -> N
     assert [item["page_id"] for item in indexed] == ["1", "2", "3"]
     assert all(item["metadata"]["root_page_id"] == "1" for item in indexed)
     assert {state.source_id for state in saved_states} == {"docs:1", "docs:2", "docs:3"}
+    assert result["errors"] == 0
+
+
+def test_sync_confluence_source_flush_by_chunks(monkeypatch) -> None:
+    monkeypatch.setenv("RAG_SYNC_FLUSH_CHUNKS", "200")
+    upsert_calls: list = []
+    save_calls: list = []
+
+    class DummyClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._get_http_client", lambda: DummyClient())
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._fetch_page", lambda client, page_id: ({
+        "id": page_id, "title": f"Page {page_id}",
+        "body_html": "<p>Content</p>",
+        "url": f"https://c/pages/{page_id}",
+        "space_key": "FUL",
+        "last_modified": "2026-04-28T10:00:00Z",
+        "version": "1",
+    }, None))
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._fetch_child_pages", lambda client, page_id: (
+        {"1": ["2"], "2": ["3", "4", "5"], "3": [], "4": [], "5": []}.get(page_id, [])))
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._html_to_text", lambda html: html)
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._chunk_text", lambda text, title: [f"{title}: {text}"] * 100)
+
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.embed_texts", lambda texts: [[0.1, 0.2] for _ in texts])
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.load_sync_states_dict", lambda kind, prefix: {})
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.save_sync_states_batch", lambda states: save_calls.append(states))
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.delete_sync_state", lambda kind, source_id: None)
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.list_sync_states", lambda kind, source_id_prefix: [])
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.delete_page", lambda page_id: None)
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.upsert_page_chunks_batch", lambda pages: upsert_calls.extend(pages))
+
+    result = sync_confluence_source(SimpleNamespace(id="docs", root_page_id="1"))
+
+    assert result["updated"] == 5
+    assert result["errors"] == 0
+    assert len(upsert_calls) == 5
+
+
+def test_sync_confluence_source_embedder_error_on_batch(monkeypatch) -> None:
+    monkeypatch.setenv("RAG_SYNC_FLUSH_CHUNKS", "1")
+    upsert_calls: list = []
+    save_calls: list = []
+    embed_call_count = [0]
+
+    def failing_embed(texts):
+        embed_call_count[0] += 1
+        if embed_call_count[0] == 2:
+            raise EmbedResponseError("embedder returned unexpected response: type=str preview='Error' batch_size=1")
+        return [[0.1, 0.2] for _ in texts]
+
+    class DummyClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._get_http_client", lambda: DummyClient())
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._fetch_page", lambda client, page_id: ({
+        "id": page_id, "title": f"Page {page_id}",
+        "body_html": "<p>Content</p>",
+        "url": f"https://c/pages/{page_id}",
+        "space_key": "FUL",
+        "last_modified": "2026-04-28T10:00:00Z",
+        "version": "1",
+    }, None))
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._fetch_child_pages", lambda client, page_id: (
+        {"1": ["2"], "2": ["3"], "3": ["4"], "4": []}.get(page_id, [])))
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._html_to_text", lambda html: html)
+    monkeypatch.setattr("qdrant_mcp.confluence_sync._chunk_text", lambda text, title: [f"{title}: {text}"] * 1)
+
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.embed_texts", failing_embed)
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.load_sync_states_dict", lambda kind, prefix: {})
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.save_sync_states_batch", lambda states: save_calls.append(states))
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.delete_sync_state", lambda kind, source_id: None)
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.list_sync_states", lambda kind, source_id_prefix: [])
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.delete_page", lambda page_id: None)
+    monkeypatch.setattr("qdrant_mcp.confluence_sync.upsert_page_chunks_batch", lambda pages: upsert_calls.extend(pages))
+
+    result = sync_confluence_source(SimpleNamespace(id="docs", root_page_id="1"))
+
+    assert result["errors"] > 0
+    assert len(upsert_calls) >= 1  # first page was indexed
+    assert result["updated"] == len(upsert_calls)
