@@ -137,7 +137,6 @@ def sync_allure_source(source: Any, stale_after_minutes: int | None = None) -> d
     flush_threshold = get_flush_chunks()
 
     def flush_changed(items: list[dict[str, Any]]) -> None:
-        nonlocal pending_changed, pending_chunks
         if not items:
             return
 

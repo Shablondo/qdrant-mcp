@@ -67,7 +67,6 @@ def _get_http_client() -> httpx.Client:
             "Authorization": f"Bearer {CONFLUENCE_PERSONAL_TOKEN}",
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (compatible; QdrantMCP/1.0)",
         },
         verify=CONFLUENCE_SSL_VERIFY,
         timeout=30.0,

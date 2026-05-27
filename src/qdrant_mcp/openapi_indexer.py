@@ -81,7 +81,7 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
     flush_threshold = get_flush_chunks()
 
     def flush_operations(items: list[dict[str, Any]]) -> None:
-        nonlocal updated, errors_count, pending_ops, pending_chunks
+        nonlocal updated, errors_count
 
         if not items:
             return
