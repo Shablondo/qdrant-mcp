@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
-from qdrant_mcp.embedder import embed_texts
+from qdrant_mcp.embedder import EmbedResponseError, embed_texts
 from qdrant_mcp.openapi_curl import build_curl_template
 from qdrant_mcp.openapi_fetcher import fetch_openapi_spec
 from qdrant_mcp.openapi_parser import normalize_openapi_operations
@@ -14,6 +15,7 @@ from qdrant_mcp.openapi_qdrant_store import (
     operation_title,
     upsert_operations_batch,
 )
+from qdrant_mcp.sync_batch import get_flush_chunks
 from qdrant_mcp.sync_state_store import (
     SyncState,
     delete_sync_state,
@@ -21,6 +23,8 @@ from qdrant_mcp.sync_state_store import (
     load_sync_states_dict,
     save_sync_states_batch,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _state_id(source_id: str, operation_key: str) -> str:
@@ -69,8 +73,73 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
 
     updated = 0
     skipped = 0
+    errors_count = 0
     seen_keys: set[str] = set()
-    changed_ops: list[dict[str, Any]] = []
+    pending_ops: list[dict[str, Any]] = []
+    pending_chunks = 0
+    error_details: list[dict[str, str]] = []
+    flush_threshold = get_flush_chunks()
+
+    def flush_operations(items: list[dict[str, Any]]) -> None:
+        nonlocal updated, errors_count
+
+        if not items:
+            return
+
+        successful_ops: list[dict[str, Any]] = []
+        successful_content_vectors: list[list[float]] = []
+        successful_title_vectors: list[list[float]] = []
+        successful_items: list[dict[str, Any]] = []
+
+        for op in items:
+            content_text = op["operation"].get("text") or operation_title(op["operation"])
+            title_text = operation_title(op["operation"])
+            try:
+                content_vecs = embed_texts([content_text])
+                title_vecs = embed_texts([title_text])
+            except EmbedResponseError as exc:
+                logger.error(
+                    "Failed to embed operation %s for source %s: %s",
+                    op["operation_key"], source.id, exc,
+                )
+                errors_count += 1
+                error_details.append({"operation_key": op["operation_key"], "message": f"embedder failure: {exc}"})
+                continue
+
+            successful_ops.append(op["operation"])
+            successful_content_vectors.append(content_vecs[0] if content_vecs else [])
+            successful_title_vectors.append(title_vecs[0] if title_vecs else [])
+            successful_items.append(op)
+
+        if successful_ops:
+            upsert_operations_batch(
+                operations=successful_ops,
+                content_vectors=successful_content_vectors,
+                title_vectors=successful_title_vectors,
+                operation_keys=[op["operation_key"] for op in successful_items],
+            )
+
+            save_sync_states_batch(
+                [
+                    SyncState(
+                        kind="openapi_operation",
+                        source_id=op["state_id"],
+                        content_hash=op["operation"]["operation_hash"],
+                        version=op["spec_hash"],
+                        metadata={
+                            "root_source_id": source.id,
+                            "operation_key": op["operation_key"],
+                            "service": op["service"],
+                            "method": op["method"],
+                            "path": op["path"],
+                            "spec_hash": op["spec_hash"],
+                        },
+                    )
+                    for op in successful_items
+                ]
+            )
+
+            updated += len(successful_items)
 
     for operation in operations:
         operation_key = str(operation["operation_key"])
@@ -80,7 +149,7 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
         if not reindex and previous and previous.get("content_hash") == operation["operation_hash"]:
             skipped += 1
             continue
-        changed_ops.append(
+        pending_ops.append(
             {
                 "operation": operation,
                 "operation_key": operation_key,
@@ -91,44 +160,14 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
                 "path": operation["path"],
             }
         )
+        pending_chunks += 1  # one chunk per operation (text + title)
+        if pending_chunks >= flush_threshold:
+            flush_operations(pending_ops)
+            pending_ops = []
+            pending_chunks = 0
 
-    if changed_ops:
-        all_content_texts = [
-            op["operation"].get("text") or operation_title(op["operation"])
-            for op in changed_ops
-        ]
-        all_title_texts = [operation_title(op["operation"]) for op in changed_ops]
-        all_content_vectors = embed_texts(all_content_texts)
-        all_title_vectors = embed_texts(all_title_texts)
-
-        upsert_operations_batch(
-            operations=[op["operation"] for op in changed_ops],
-            content_vectors=all_content_vectors,
-            title_vectors=all_title_vectors,
-            operation_keys=[op["operation_key"] for op in changed_ops],
-        )
-
-        save_sync_states_batch(
-            [
-                SyncState(
-                    kind="openapi_operation",
-                    source_id=op["state_id"],
-                    content_hash=op["operation"]["operation_hash"],
-                    version=op["spec_hash"],
-                    metadata={
-                        "root_source_id": source.id,
-                        "operation_key": op["operation_key"],
-                        "service": op["service"],
-                        "method": op["method"],
-                        "path": op["path"],
-                        "spec_hash": op["spec_hash"],
-                    },
-                )
-                for op in changed_ops
-            ]
-        )
-
-        updated = len(changed_ops)
+    if pending_ops:
+        flush_operations(pending_ops)
 
     deleted = 0
     for state in list_sync_states("openapi_operation", f"{source.id}:"):
@@ -145,9 +184,10 @@ def index_openapi_source(source: Any, *, reindex: bool = False) -> dict[str, Any
         "updated": updated,
         "skipped": skipped,
         "deleted": deleted,
-        "errors": 0,
+        "errors": errors_count,
         "operations_total": len(operations),
         "spec_hash": fetched.spec_hash,
+        "error_details": error_details,
     }
 
 

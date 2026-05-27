@@ -1,6 +1,7 @@
 import threading
 from qdrant_mcp.allure_sync import build_test_case_fingerprint
 from qdrant_mcp.allure_sync import sync_allure_source
+from qdrant_mcp.embedder import EmbedResponseError
 from types import SimpleNamespace
 
 
@@ -84,3 +85,112 @@ def test_sync_allure_source_processes_test_cases_in_parallel(monkeypatch) -> Non
     assert sorted(state.source_id for state in saved_states) == ["allure-project-38:1", "allure-project-38:2"]
     assert result["updated"] == 2
     assert result["errors"] == 0
+
+
+def test_sync_allure_source_flush_by_chunks(monkeypatch) -> None:
+    monkeypatch.setenv("RAG_SYNC_FLUSH_CHUNKS", "1")
+    monkeypatch.setenv("RAG_ALLURE_SYNC_MAX_WORKERS", "1")
+    upsert_calls: list = []
+    save_calls: list = []
+
+    class FakeAllureClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+        def list_test_cases(self, project_id=None, rql=None):
+            return [{"id": 1}, {"id": 2}, {"id": 3}]
+
+        def get_complete_test_case(self, test_case_id):
+            return {
+                "test_case": {"id": test_case_id, "name": f"TC {test_case_id}", "updatedDate": "2026-04-29T10:00:00Z"},
+                "scenario": {"steps": [{"name": "Step"}]},
+                "attachments": [],
+                "tags": [],
+            }
+
+    monkeypatch.setattr("qdrant_mcp.allure_sync.AllureTestOpsClient", FakeAllureClient)
+    monkeypatch.setattr("qdrant_mcp.allure_sync.load_sync_states_dict", lambda kind, prefix: {})
+    monkeypatch.setattr("qdrant_mcp.allure_sync.save_sync_states_batch", lambda states: save_calls.append(states))
+    monkeypatch.setattr("qdrant_mcp.allure_sync.list_sync_states", lambda kind, source_id_prefix=None: [])
+    monkeypatch.setattr("qdrant_mcp.allure_sync.delete_test_cases", lambda ids: None)
+    monkeypatch.setattr("qdrant_mcp.allure_sync.delete_sync_state", lambda kind, source_id: None)
+    monkeypatch.setattr(
+        "qdrant_mcp.allure_sync._build_chunks",
+        lambda test_case_id, payload, project_id: {
+            "chunks": [{"chunk_type": "scenario", "text": "step 1"}],
+            "metadata": {"source": "allure", "project_id": str(project_id), "name": f"TC {test_case_id}"},
+            "name": f"TC {test_case_id}",
+        },
+    )
+    monkeypatch.setattr("qdrant_mcp.allure_sync.embed_texts", lambda texts: [[0.1, 0.2] for _ in texts])
+    monkeypatch.setattr(
+        "qdrant_mcp.allure_sync.upsert_test_cases_batch",
+        lambda test_cases: upsert_calls.extend(tc["test_case_id"] for tc in test_cases),
+    )
+
+    result = sync_allure_source(SimpleNamespace(id="allure-project-38", project_id=38))
+
+    assert result["updated"] == 3
+    assert result["errors"] == 0
+    assert len(upsert_calls) == 3
+
+
+def test_sync_allure_source_embedder_error_on_batch(monkeypatch) -> None:
+    monkeypatch.setenv("RAG_SYNC_FLUSH_CHUNKS", "1")
+    monkeypatch.setenv("RAG_ALLURE_SYNC_MAX_WORKERS", "1")
+    upsert_calls: list = []
+    save_calls: list = []
+    embed_call_count = [0]
+
+    def failing_embed(texts):
+        embed_call_count[0] += 1
+        if embed_call_count[0] == 2:
+            raise EmbedResponseError("embedder returned unexpected response: type=str preview='Error' batch_size=1")
+        return [[0.1, 0.2] for _ in texts]
+
+    class FakeAllureClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+        def list_test_cases(self, project_id=None, rql=None):
+            return [{"id": 1}, {"id": 2}, {"id": 3}]
+
+        def get_complete_test_case(self, test_case_id):
+            return {
+                "test_case": {"id": test_case_id, "name": f"TC {test_case_id}", "updatedDate": "2026-04-29T10:00:00Z"},
+                "scenario": {"steps": [{"name": "Step"}]},
+                "attachments": [],
+                "tags": [],
+            }
+
+    monkeypatch.setattr("qdrant_mcp.allure_sync.AllureTestOpsClient", FakeAllureClient)
+    monkeypatch.setattr("qdrant_mcp.allure_sync.load_sync_states_dict", lambda kind, prefix: {})
+    monkeypatch.setattr("qdrant_mcp.allure_sync.save_sync_states_batch", lambda states: save_calls.append(states))
+    monkeypatch.setattr("qdrant_mcp.allure_sync.list_sync_states", lambda kind, source_id_prefix=None: [])
+    monkeypatch.setattr("qdrant_mcp.allure_sync.delete_test_cases", lambda ids: None)
+    monkeypatch.setattr("qdrant_mcp.allure_sync.delete_sync_state", lambda kind, source_id: None)
+    monkeypatch.setattr(
+        "qdrant_mcp.allure_sync._build_chunks",
+        lambda test_case_id, payload, project_id: {
+            "chunks": [{"chunk_type": "scenario", "text": "step 1"}],
+            "metadata": {"source": "allure", "project_id": str(project_id), "name": f"TC {test_case_id}"},
+            "name": f"TC {test_case_id}",
+        },
+    )
+    monkeypatch.setattr("qdrant_mcp.allure_sync.embed_texts", failing_embed)
+    monkeypatch.setattr(
+        "qdrant_mcp.allure_sync.upsert_test_cases_batch",
+        lambda test_cases: upsert_calls.extend(tc["test_case_id"] for tc in test_cases),
+    )
+
+    result = sync_allure_source(SimpleNamespace(id="allure-project-38", project_id=38))
+
+    assert result["errors"] > 0
+    assert len(upsert_calls) >= 1
+    assert result["updated"] == len(upsert_calls)

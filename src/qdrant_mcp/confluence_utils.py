@@ -35,6 +35,18 @@ CHUNK_MAX_TOKENS = int(os.environ.get("CHUNK_MAX_TOKENS", "500"))
 CHUNK_OVERLAP_TOKENS = int(os.environ.get("CHUNK_OVERLAP_TOKENS", "50"))
 
 
+RAG_CLEAN_URLS = os.environ.get("RAG_CLEAN_URLS", "true").lower() not in ("false", "0", "no")
+
+
+def _clean_text_for_embedding(text: str) -> str:
+    """Удаляет URL и маркдаун-ссылки из текста перед эмбеддингом."""
+    if not text or not RAG_CLEAN_URLS:
+        return text
+    text = re.sub(r'\[([^\]]*)\]\([^\)]*\)', r'\1', text)
+    text = re.sub(r'https?://[^\s]+', '[URL]', text)
+    return text
+
+
 def _get_tokenizer():
     """Возвращает токенизатор cl100k_base (GPT-4 совместимый)."""
     try:
@@ -93,6 +105,8 @@ def _chunk_text(text: str, page_title: str = "") -> list[str]:
     if not text.strip():
         return []
 
+    text = _clean_text_for_embedding(text)
+
     enc = _get_tokenizer()
 
     title_prefix = f"# {page_title}\n\n" if page_title else ""
@@ -116,6 +130,12 @@ def _chunk_text(text: str, page_title: str = "") -> list[str]:
                 current_tokens = sum(len(enc.encode(p)) for p in current_chunk_paragraphs)
 
             sentences = re.split(r"(?<=[.!?])\s+", para)
+            if len(sentences) == 1 and para_tokens > effective_max:
+                tokens = enc.encode(para)
+                for start in range(0, len(tokens), effective_max):
+                    chunk_text = enc.decode(tokens[start:start + effective_max])
+                    chunks.append(title_prefix + chunk_text)
+                continue
             for sentence in sentences:
                 sent_tokens = len(enc.encode(sentence))
                 if current_tokens + sent_tokens > effective_max and current_chunk_paragraphs:
@@ -172,16 +192,16 @@ def _fetch_page(client: httpx.Client, page_id: str) -> Tuple[Optional[Dict[str, 
         data = response.json()
     except httpx.HTTPStatusError as e:
         message = f"HTTP {e.response.status_code}"
-        logger.warning("HTTP ошибка при получении страницы %s: %s", page_id, e.response.status_code)
+        logger.warning("HTTP error fetching page %s: %s", page_id, e.response.status_code)
         return None, message
     except json.JSONDecodeError:
         preview = response.text[:200].replace("\n", " ")
         message = f"HTTP {response.status_code}: invalid JSON, body: «{preview}»"
-        logger.warning("Не-JSON ответ при получении страницы %s: %s", page_id, preview)
+        logger.warning("Non-JSON response fetching page %s: %s", page_id, preview)
         return None, message
     except Exception as e:
         message = str(e) or type(e).__name__
-        logger.error("Ошибка при получении страницы %s: %s", page_id, e)
+        logger.error("Error fetching page %s: %s", page_id, e)
         return None, message
 
     body_html = ""
@@ -242,7 +262,7 @@ def _fetch_child_pages(client: httpx.Client, page_id: str) -> list[str]:
             response.raise_for_status()
             data = response.json()
         except Exception as e:
-            logger.warning("Ошибка при получении дочерних страниц для %s: %s", page_id, e)
+            logger.warning("Error fetching child pages for %s: %s", page_id, e)
             break
 
         results = data.get("results", [])
